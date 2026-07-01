@@ -1,0 +1,9 @@
+node_modules
+dist
+# Never send local secrets (vault, DB, session grants) into the build context.
+data
+.env
+.git
+*.log
+.DS_Store
+*.xlsx

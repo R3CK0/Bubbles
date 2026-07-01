@@ -1,0 +1,20 @@
+services:
+  finances-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: finances-backend:local
+    restart: unless-stopped
+    # Host-loopback only — this never needs to be reachable from outside the machine.
+    ports:
+      - "127.0.0.1:4000:4000"
+    volumes:
+      # Bind mount (not a named volume) is required: the vault CLI (`npm run
+      # vault -- ...`) runs on the HOST, where the physical YubiKey is
+      # actually reachable, and must see the exact same files as the
+      # container. See README.md "Docker deployment".
+      - ./data:/app/data
+    environment:
+      PLAID_COUNTRY_CODES: ${PLAID_COUNTRY_CODES:-US}
+      PLAID_LANGUAGE: ${PLAID_LANGUAGE:-en}
+      PLAID_PRODUCTS: ${PLAID_PRODUCTS:-transactions}

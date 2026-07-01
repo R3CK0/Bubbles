@@ -1,0 +1,30 @@
+{
+  "name": "finances-backend",
+  "version": "0.1.0",
+  "description": "Local-first backend for syncing bank accounts, balances, and transactions via Plaid, with a YubiKey-gated secrets vault.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "vault": "tsx src/cli/vault-cli.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "commander": "^12.1.0",
+    "express": "^4.21.1",
+    "plaid": "^32.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.7.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}

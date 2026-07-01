@@ -1,0 +1,13 @@
+node_modules/
+dist/
+
+# Local-only data: sqlite db, YubiKey identity/recipient, encrypted vault, session grants.
+# None of this should ever leave this machine.
+data/
+
+.env
+*.log
+.DS_Store
+
+# Personal financial documents kept in this folder — never track these.
+*.xlsx

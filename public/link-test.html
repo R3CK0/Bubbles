@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Finances — Plaid Link test harness</title>
+<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; }
+  button { font-size: 1rem; padding: 0.6rem 1.2rem; cursor: pointer; }
+  pre { background: #f4f4f4; padding: 1rem; overflow-x: auto; }
+  .error { color: #b00020; }
+</style>
+</head>
+<body>
+  <h1>Plaid Link test harness</h1>
+  <p>
+    This is a minimal manual test page for the backend running at <code>http://127.0.0.1:4000</code>.
+    It is not part of the production app — just a way to exercise the Link flow (bank sign-in) against
+    a Plaid Sandbox item without building a real frontend yet.
+  </p>
+  <button id="link-btn">Link a bank account</button>
+  <pre id="output">(status will appear here)</pre>
+
+  <script>
+    const output = document.getElementById('output');
+    const log = (label, data) => {
+      output.textContent += `\n${label}: ${JSON.stringify(data, null, 2)}`;
+    };
+
+    document.getElementById('link-btn').addEventListener('click', async () => {
+      output.textContent = 'Requesting link token...';
+      try {
+        const tokenRes = await fetch('/api/link/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientUserId: 'local-test-user' }),
+        });
+        if (!tokenRes.ok) throw new Error(`link/token failed: ${tokenRes.status}`);
+        const { linkToken } = await tokenRes.json();
+        log('link_token created', { linkToken: linkToken.slice(0, 12) + '…' });
+
+        const handler = Plaid.create({
+          token: linkToken,
+          onSuccess: async (publicToken, metadata) => {
+            log('Link onSuccess', { institution: metadata.institution });
+            const exchangeRes = await fetch('/api/link/exchange', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ publicToken }),
+            });
+            const result = await exchangeRes.json();
+            log('exchange result', result);
+          },
+          onExit: (err, metadata) => {
+            if (err) log('Link onExit error', err);
+          },
+        });
+        handler.open();
+      } catch (err) {
+        output.textContent += `\nERROR: ${err.message}`;
+      }
+    });
+  </script>
+</body>
+</html>
