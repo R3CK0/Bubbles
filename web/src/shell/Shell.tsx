@@ -119,16 +119,32 @@ export function Shell() {
           {ui.sidebarOpen && <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-.01em" }}>Bubbles</div>}
         </div>
         <nav className="col" style={{ gap: 2 }}>
-          {NAV_GROUPS.map((g, gi) => (
-            <div key={g.label ?? gi} className="col" style={{ gap: 2 }}>
-              {gi > 0 && (
-                ui.sidebarOpen && g.label
-                  ? <div className="label" style={{ padding: "14px 12px 5px", fontSize: 10.5 }}>{g.label}</div>
-                  : <div style={{ margin: "8px 10px", borderTop: "1px solid var(--line)" }} />
-              )}
-              {g.items.map((n) => <NavRow key={n.to} {...n} open={ui.sidebarOpen} />)}
-            </div>
-          ))}
+          {NAV_GROUPS.map((g, gi) => {
+            // never hide the group that holds the current page; icon-only mode
+            // has no header to toggle, so it always shows every item
+            const hasActive = g.items.some((it) => it.to === "/" ? loc.pathname === "/" : loc.pathname.startsWith(it.to));
+            const collapsed = ui.sidebarOpen && g.label != null && ui.collapsedGroups.includes(g.label) && !hasActive;
+            return (
+              <div key={g.label ?? gi} className="col" style={{ gap: 2 }}>
+                {gi > 0 && (
+                  ui.sidebarOpen && g.label
+                    ? (
+                      <div className="row hoverable" title={collapsed ? `Show ${g.label}` : `Hide ${g.label}`}
+                        onClick={() => g.label && ui.toggleGroup(g.label)}
+                        style={{ padding: "13px 12px 5px", cursor: "pointer", gap: 6, justifyContent: "space-between" }}>
+                        <span className="label" style={{ fontSize: 10.5, padding: 0 }}>{g.label}</span>
+                        <svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round"
+                          style={{ color: "var(--ink-muted)", transform: collapsed ? "rotate(-90deg)" : "none", transition: "transform .2s" }}>
+                          <path d="M6 9l6 6 6-6" />
+                        </svg>
+                      </div>
+                    )
+                    : <div style={{ margin: "8px 10px", borderTop: "1px solid var(--line)" }} />
+                )}
+                {!collapsed && g.items.map((n) => <NavRow key={n.to} {...n} open={ui.sidebarOpen} />)}
+              </div>
+            );
+          })}
         </nav>
         <div style={{ flex: 1 }} />
         <NavRow to="/help" name="Help" icon="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.6-3 4M12 17h.01" open={ui.sidebarOpen} />
