@@ -48,6 +48,23 @@ export function Budget() {
       }),
     ["categories", "budget"],
   );
+  // rename keeps the category_id stable (upsert only changes the name) so
+  // existing budget lines and categorized transactions stay attached
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const renameCategory = useAction(
+    (d: { categoryId: string; parentId: string; name: string; kind: Category["kind"] }) =>
+      api("/api/categories", {
+        method: "POST",
+        json: { categoryId: d.categoryId, parentId: d.parentId, name: d.name, kind: d.kind },
+      }),
+    ["categories", "budget"],
+  );
+  const commitRename = (sub: { categoryId: string; name: string }, parentId: string, kind: Category["kind"]) => {
+    const name = renameDraft.trim();
+    if (name && name !== sub.name) renameCategory.mutate({ categoryId: sub.categoryId, parentId, name, kind });
+    setRenaming(null);
+  };
 
   const rows = view.data?.rows ?? [];
   const topExpense = rows.filter((r) => r.kind === "expense" && r.parentId === null);
@@ -67,7 +84,9 @@ export function Budget() {
   const incomeRows = rows.filter((r) => r.kind === "income" && (r.budget > 0 || r.actual !== 0)).sort((a, b) => b.budget - a.budget);
   const incomeBudget = rows.filter((r) => r.kind === "income").reduce((t, r) => t + r.budget, 0);
   const incomeActual = rows.filter((r) => r.kind === "income").reduce((t, r) => t + r.actual, 0);
-  const expenseBudget = rows.filter((r) => r.kind === "expense" && r.parentId === null).reduce((t, r) => t + r.budget, 0);
+  // subcategory budgets roll up into their parent, so the spending total sums
+  // every expense line — parents' own amounts plus all their subcategories'
+  const expenseBudget = rows.filter((r) => r.kind === "expense").reduce((t, r) => t + r.budget, 0);
   const remaining = incomeBudget - expenseBudget;
   const narrativeFor = (id: string) => variances.data?.narratives.find((n) => n.categoryId === id);
 
@@ -158,8 +177,18 @@ export function Budget() {
           )}
           {topExpense.length === 0 && <EmptyState text="No budget lines yet — set amounts from the category rows or run the setup wizard." />}
           {topExpense.map((r) => {
-            const over = r.actual > r.budget && r.budget > 0;
-            const fillPct = r.budget > 0 ? Math.min(1, r.actual / r.budget) : r.actual > 0 ? 1 : 0;
+            const subs = subsOf(r.categoryId);
+            // subcategory amounts roll up: the category's shown total is its
+            // own budget/actual plus every subcategory's
+            const subBudget = subs.reduce((t, s) => t + s.budget, 0);
+            const subActual = subs.reduce((t, s) => t + s.actual, 0);
+            const budgetTotal = r.budget + subBudget;
+            const actualTotal = r.actual + subActual;
+            const variance = actualTotal - budgetTotal;
+            const over = actualTotal > budgetTotal && budgetTotal > 0;
+            const fillPct = budgetTotal > 0 ? Math.min(1, actualTotal / budgetTotal) : actualTotal > 0 ? 1 : 0;
+            const dayFraction = view.data?.dayFraction ?? 1;
+            const pace = budgetTotal > 0 ? actualTotal / (budgetTotal * dayFraction) : null;
             const isOpen = expanded === r.categoryId;
             const narrative = narrativeFor(r.categoryId);
             const editVal = edits[r.categoryId] ?? r.budget;
@@ -168,15 +197,15 @@ export function Budget() {
                 <div className="row" style={{ gap: 14, cursor: "pointer" }} onClick={() => { setExpanded(isOpen ? null : r.categoryId); setSubDraft(""); }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="spread" style={{ alignItems: "baseline", marginBottom: 8 }}>
-                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>{r.name}</div>
-                      <div className="muted num" style={{ fontSize: 12 }}>{fmt(r.actual)} <span style={{ opacity: 0.6 }}>/ {fmt(r.budget)}</span></div>
+                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>{r.name}{subs.length > 0 && <span className="muted" style={{ fontSize: 11, fontWeight: 500, marginLeft: 6 }}>{subs.length} sub{subs.length === 1 ? "" : "s"}</span>}</div>
+                      <div className="muted num" style={{ fontSize: 12 }}>{fmt(actualTotal)} <span style={{ opacity: 0.6 }}>/ {fmt(budgetTotal)}</span></div>
                     </div>
                     <div className="bar-track">
                       <div className="bar-fill" style={{ width: `${fillPct * 100}%`, background: over ? "var(--warn)" : "var(--accent)" }} />
                     </div>
                   </div>
-                  <div className="num" style={{ fontSize: 12, fontWeight: 600, minWidth: 84, textAlign: "right", color: r.variance > 0 ? "var(--warn)" : "var(--accent)" }}>
-                    {r.budget > 0 ? fmtDelta(r.variance) : ""}
+                  <div className="num" style={{ fontSize: 12, fontWeight: 600, minWidth: 84, textAlign: "right", color: variance > 0 ? "var(--warn)" : "var(--accent)" }}>
+                    {budgetTotal > 0 ? fmtDelta(variance) : ""}
                   </div>
                 </div>
                 {isOpen && (
@@ -190,10 +219,29 @@ export function Budget() {
                       <div>
                         <div className="label" style={{ marginBottom: 9 }}>Subcategories<Tip text="Split a category into finer buckets (Insurance → car / life / home). Each subcategory can carry its own monthly budget; rules and AI suggestions can target them directly." /></div>
                         <div className="col" style={{ gap: 10 }}>
-                          {subsOf(r.categoryId).map((sub) => (
+                          {subs.map((sub) => (
                             <div key={sub.categoryId} className="row" style={{ gap: 10 }}>
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 12, marginBottom: 4 }}>{sub.name}</div>
+                                {renaming === sub.categoryId ? (
+                                  <input
+                                    className="input" autoFocus
+                                    style={{ width: "100%", padding: "2px 6px", fontSize: 12, marginBottom: 4 }}
+                                    value={renameDraft}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) => setRenameDraft(e.target.value)}
+                                    onBlur={() => commitRename(sub, r.categoryId, r.kind)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                      else if (e.key === "Escape") setRenaming(null);
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="row" style={{ gap: 6, marginBottom: 4 }}>
+                                    <span style={{ fontSize: 12 }}>{sub.name}</span>
+                                    <span className="link" style={{ fontSize: 10.5 }} title="rename subcategory"
+                                      onClick={(e) => { e.stopPropagation(); setRenaming(sub.categoryId); setRenameDraft(sub.name); }}>edit</span>
+                                  </div>
+                                )}
                                 <div className="bar-track" style={{ height: 6 }}>
                                   <div className="bar-fill" style={{ width: `${(sub.budget > 0 ? Math.min(1, sub.actual / sub.budget) : sub.actual > 0 ? 1 : 0) * 100}%`, background: "var(--accent)" }} />
                                 </div>
@@ -211,7 +259,7 @@ export function Budget() {
                               />
                             </div>
                           ))}
-                          {subsOf(r.categoryId).length === 0 && <div className="muted" style={{ fontSize: 12 }}>No subcategories</div>}
+                          {subs.length === 0 && <div className="muted" style={{ fontSize: 12 }}>No subcategories</div>}
                           <div className="row" style={{ gap: 8 }} onClick={(e) => e.stopPropagation()}>
                             <input className="input" placeholder="add subcategory… (e.g. Car insurance)" value={subDraft}
                               style={{ flex: 1, padding: "6px 10px", fontSize: 12 }}
@@ -230,14 +278,20 @@ export function Budget() {
                         </div>
                       </div>
                       <div>
-                        <div className="label" style={{ marginBottom: 8 }}>Set budget</div>
+                        <div className="label" style={{ marginBottom: 8 }}>{subs.length > 0 ? "This category" : "Set budget"}{subs.length > 0 && <Tip text="The amount budgeted for spending charged directly to this category — its subcategories are budgeted separately and add on top." />}</div>
                         <input type="range" min={0} max={Math.max(4000, r.budget * 2)} step={20} value={editVal}
                           onChange={(e) => setEdits((s) => ({ ...s, [r.categoryId]: Number(e.target.value) }))}
                           onMouseUp={() => commitEdit(r.categoryId)}
                           onTouchEnd={() => commitEdit(r.categoryId)}
                           style={{ width: "100%", accentColor: "var(--accent)" }} />
                         <div className="num" style={{ fontSize: 13, fontWeight: 600, color: "var(--accent)", textAlign: "center", marginTop: 4 }}>{fmt(editVal)} / mo</div>
-                        {r.pace !== null && r.pace > 1 && <div className="muted" style={{ fontSize: 11, textAlign: "center", marginTop: 6, color: "var(--warn)" }}>pacing {Math.round(r.pace * 100)}% of budget</div>}
+                        {subBudget > 0 && (
+                          <div className="muted" style={{ fontSize: 11, textAlign: "center", marginTop: 6, lineHeight: 1.5 }}>
+                            + {fmt(subBudget)} from {subs.length} subcategor{subs.length === 1 ? "y" : "ies"}<br />
+                            = <b className="num" style={{ color: "var(--ink)" }}>{fmt(budgetTotal)}</b> total
+                          </div>
+                        )}
+                        {pace !== null && pace > 1 && <div className="muted" style={{ fontSize: 11, textAlign: "center", marginTop: 6, color: "var(--warn)" }}>pacing {Math.round(pace * 100)}% of budget</div>}
                       </div>
                     </div>
                   </div>
