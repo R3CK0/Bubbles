@@ -445,9 +445,10 @@ function Inbox({ categories }: { categories: Category[] }) {
     return li ? `${g.name} → ${li.name}` : g.name;
   };
 
-  // deposits (Plaid amount < 0) offer income targets first — salary, rental,
-  // any income subcategory — then expense tops (a deposit can be a refund);
-  // money out sticks to expense categories
+  // every top-level budget category is offered; the history/AI suggestion is
+  // floated to the front. deposits (money in) lead with income targets — a
+  // deposit can also be a refund, so expense tops follow; money out sticks to
+  // expense categories.
   const options = useMemo(() => {
     if (!card) return [];
     const deposit = card.transaction.amount > 0; // signed flow: positive = money in
@@ -456,7 +457,7 @@ function Inbox({ categories }: { categories: Category[] }) {
     const pool = deposit ? [...income, ...expenseTops] : expenseTops;
     const suggested = pool.find((c) => c.category_id === card.suggestedCategoryId);
     const rest = pool.filter((c) => c.category_id !== suggested?.category_id);
-    return (suggested ? [suggested, ...rest] : pool).slice(0, 9);
+    return suggested ? [suggested, ...rest] : pool;
   }, [categories, card]);
 
   if (!inbox.data) return <Card><div className="empty">Loading…</div></Card>;
@@ -575,7 +576,7 @@ function Inbox({ categories }: { categories: Category[] }) {
                     ? setExpandedParent(c.category_id)
                     : categorize.mutate({ transactionId: card.transaction.transactionId, categoryId: c.category_id, merchant: card.transaction.merchant })
                 }>
-                {i + 1}. {c.name}{subs.length > 0 && <span className="muted" style={{ marginLeft: 5, fontSize: 10 }}>▾</span>}
+                {c.name}{subs.length > 0 && <span className="muted" style={{ marginLeft: 5, fontSize: 10 }}>▾</span>}
               </button>
             );
           })}
