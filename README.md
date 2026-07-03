@@ -25,9 +25,13 @@ pass.
 - **Session grants** let the server run unattended for up to 30 days: running
   `vault grant-session` unlocks the vault with your YubiKey once, then seals
   the secrets with a freshly generated random key stored in the macOS
-  Keychain (with expiry metadata enforced in code). When it expires, the
-  server refuses to start until you touch the YubiKey again — either via a
-  direct unlock at boot, or by re-running `grant-session`.
+  Keychain (with expiry metadata enforced in code). Pass `--portable` to also
+  write that key as a 0600 file under `data/vault/` — required when the
+  server runs in Docker, since a Linux container can't read the macOS
+  Keychain. A RUNNING server (local or container) detects a fresh grant
+  automatically within a minute — no restart needed. When a grant expires,
+  sync locks again until you touch the YubiKey and re-run `grant-session`;
+  the dashboards keep working from local data throughout.
 
 ## Prerequisites
 
@@ -112,9 +116,11 @@ container, so the split is:
   recipient-only *encryption* (e.g. re-sealing the vault when a new bank gets
   linked through the running API) — that's pure public-key wrapping and
   genuinely doesn't need the physical key present. *Decrypting* the vault
-  always needs the real hardware, so if the container ever boots with no
-  valid session grant, it will try and fail fast with a clear error in
-  `docker compose logs` telling you to refresh one from the host.
+  always needs the real hardware, so the container boots LOCKED when there's
+  no valid grant (dashboards still work), and unlocks by itself as soon as a
+  grant appears in the shared `./data`. Grants for the container must be
+  issued with `--portable`: the default stores the session key only in the
+  macOS Keychain, which the Linux container cannot read.
 
 Both host and container read/write the same `./data` directory — it's a bind
 mount (`./data:/app/data` in `docker-compose.yml`), not a Docker-managed
@@ -126,8 +132,8 @@ Practical loop:
 ```bash
 npm run vault -- init                                         # host, YubiKey required, once
 npm run vault -- set-plaid-keys --client-id ... --secret ...   # host, YubiKey required
-npm run vault -- grant-session --days 30                       # host, YubiKey required, every ≤30 days
-docker compose up -d                                           # container just serves the API
+npm run vault -- grant-session --days 30 --portable            # host, YubiKey required, every ≤30 days
+docker compose up -d                                           # container serves the app; picks grants up live
 ```
 
 The API is published to `127.0.0.1:4000` only (not all interfaces), matching

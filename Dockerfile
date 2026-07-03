@@ -23,6 +23,14 @@ COPY src ./src
 RUN npm run build
 RUN npm prune --omit=dev
 
+# ---- Web app build (Vite emits into ../public, which the server serves) ----
+FROM node:22-bookworm-slim AS web-build
+WORKDIR /app
+COPY web/package.json web/package-lock.json ./web/
+RUN cd web && npm ci
+COPY web ./web
+RUN cd web && npm run build
+
 # ---- Runtime ----
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
@@ -39,7 +47,7 @@ COPY --from=yubikey-plugin-build /out/bin/age-plugin-yubikey /usr/local/bin/age-
 COPY --from=app-build /app/node_modules ./node_modules
 COPY --from=app-build /app/dist ./dist
 COPY --from=app-build /app/package.json ./package.json
-COPY public ./public
+COPY --from=web-build /app/public ./public
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 

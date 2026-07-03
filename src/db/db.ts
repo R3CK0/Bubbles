@@ -5,6 +5,11 @@ import { runMigrations } from "./migrator.js";
 
 let instance: Database.Database | null = null;
 
+/** Test seam: inject an in-memory database (migrations already applied). */
+export function _setDbForTests(db: Database.Database | null): void {
+  instance = db;
+}
+
 export function getDb(): Database.Database {
   if (instance) return instance;
 

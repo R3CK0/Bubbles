@@ -77,8 +77,17 @@ function keychainDelete(): void {
   );
 }
 
-function storeSessionKey(key: Buffer): void {
+function storeSessionKey(key: Buffer, portable = false): void {
   const b64 = key.toString("base64");
+  if (portable) {
+    // Docker shares ./data with a Linux container that cannot read the macOS
+    // Keychain — the session key must live next to the sealed blob as a 0600
+    // file. Also store it in the Keychain (same key) so host boots keep
+    // preferring the safer copy.
+    writeFileSecure(config.vault.sessionKeyFallbackPath, b64);
+    keychainStore(b64);
+    return;
+  }
   const storedInKeychain = keychainStore(b64);
   if (storedInKeychain) {
     if (fs.existsSync(config.vault.sessionKeyFallbackPath)) {
@@ -142,7 +151,7 @@ export function isSessionValid(meta: SessionMeta | null = loadSessionMeta()): bo
 }
 
 /** Seals plaintext with a brand-new session key and writes both the blob and the grant metadata. */
-export function createGrant(plaintext: Buffer, requestedDays: number): SessionMeta {
+export function createGrant(plaintext: Buffer, requestedDays: number, portable = false): SessionMeta {
   const days = Math.max(1, Math.min(requestedDays, config.session.maxDays));
   const sessionKey = crypto.randomBytes(32);
   const sealed = aesGcmEncrypt(sessionKey, plaintext);
@@ -156,7 +165,7 @@ export function createGrant(plaintext: Buffer, requestedDays: number): SessionMe
     maxDays: days,
   };
   writeFileSecure(config.vault.sessionMetaPath, JSON.stringify(meta, null, 2));
-  storeSessionKey(sessionKey);
+  storeSessionKey(sessionKey, portable);
   return meta;
 }
 

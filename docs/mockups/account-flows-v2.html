@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Money movement — July 2026 (mockup v2)</title>
+<!--
+  MOCKUP v2 for review — the "statement" treatment.
+  A layered flow diagram: personal chequing (left) → joint hub (centre) →
+  destinations (right), rendered as solid variable-width bands (no animation,
+  no dashes). Destinations are grouped: operations, savings & goals, and debt
+  payments — credit-card payments land in the debt lane and carry the note
+  that the card is linked to a debt whose balance auto-syncs nightly.
+  Hover a band or account to isolate it; the detail rail lists the transfers.
+  Sample data only.
+-->
+<style>
+  :root {
+    --bg: #101216; --surface: #16181d; --surface-2: #1d2026; --line: rgba(255,255,255,.07);
+    --ink: #e8eaed; --ink-muted: #8b93a1; --ink-faint: #5c6470;
+    --accent: #45d483; --warn: #e6b84c;
+    --band: rgba(148,163,184,.28); --band-save: rgba(63,195,173,.34); --band-debt: rgba(230,184,76,.32);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 36px 24px; }
+  .num { font-variant-numeric: tabular-nums; }
+  .report { max-width: 1040px; margin: 0 auto; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+  header { padding: 24px 28px 20px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: flex-end; }
+  h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: .01em; }
+  .sub { color: var(--ink-muted); font-size: 12px; margin-top: 3px; }
+  .stats { display: flex; gap: 36px; }
+  .stat .k { font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); }
+  .stat .v { font-size: 19px; font-weight: 600; margin-top: 2px; }
+
+  .diagram { position: relative; padding: 26px 28px 6px; }
+  .lane-label { font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); }
+  .node { position: absolute; width: 220px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px 8px; transition: opacity .18s, border-color .18s; cursor: grab; user-select: none; display: flex; flex-direction: column; justify-content: center; }
+  .node.dragging { cursor: grabbing; transition: none; border-color: var(--ink-muted); }
+  .node.dim { opacity: .3; }
+  .node.hot { border-color: var(--ink-muted); }
+  .node .nm { font-size: 12.5px; font-weight: 600; }
+  .node .meta { font-size: 11px; color: var(--ink-muted); display: flex; justify-content: space-between; margin-top: 2px; }
+  .node .note { font-size: 10px; color: var(--warn); margin-top: 3px; }
+  .grp { position: absolute; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); }
+  svg.bands { position: absolute; inset: 0; z-index: 0; overflow: visible; }
+  .node { z-index: 1; }
+  .band { transition: opacity .18s; cursor: pointer; }
+  .band.dim { opacity: .16; }
+
+  .rail { padding: 14px 28px 8px; border-top: 1px solid var(--line); min-height: 62px; display: flex; gap: 28px; align-items: flex-start; }
+  .rail .title { font-size: 12.5px; font-weight: 600; min-width: 280px; }
+  .rail .list { display: flex; gap: 22px; flex-wrap: wrap; font-size: 12px; color: var(--ink-muted); }
+  .rail .list b { color: var(--ink); font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; font-size: 10.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; padding: 10px 12px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  tr:last-child td { border-bottom: none; }
+  th.r, td.r { text-align: right; }
+  .tag { font-size: 10.5px; padding: 2px 8px; border-radius: 4px; letter-spacing: .02em; }
+  .tag.ops { background: rgba(148,163,184,.14); color: #aeb8c6; }
+  .tag.save { background: rgba(63,195,173,.14); color: #58cdb9; }
+  .tag.debt { background: rgba(230,184,76,.14); color: var(--warn); }
+  tfoot td { color: var(--ink-muted); font-size: 11px; padding-top: 12px; border: none; }
+</style>
+</head>
+<body>
+
+<div class="report">
+  <header>
+    <div>
+      <h1>Money movement between accounts</h1>
+      <div class="sub">July 2026 · transfers between household accounts — excluded from spending, shown here instead</div>
+    </div>
+    <div class="stats num">
+      <div class="stat"><div class="k">Total moved</div><div class="v">$11,253</div></div>
+      <div class="stat"><div class="k">To savings &amp; goals</div><div class="v" style="color: var(--accent)">$3,733</div></div>
+      <div class="stat"><div class="k">Debt payments</div><div class="v" style="color: var(--warn)">$2,790</div></div>
+      <div class="stat"><div class="k">Transfers</div><div class="v">13</div></div>
+    </div>
+  </header>
+
+  <div class="diagram" id="diagram">
+    <svg class="bands" id="bands"></svg>
+  </div>
+
+  <div class="rail" id="rail">
+    <div class="title muted" style="color: var(--ink-muted); font-weight: 400;">Hover a flow or an account for its transfers · drag accounts to rearrange.</div>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>From</th><th>To</th><th>Type</th><th class="r">Transfers</th><th class="r">Amount</th></tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+    <tfoot>
+      <tr><td colspan="5">Credit-card payments are transfers to the card's account; each card is linked to a debt, so the payment reduces the tracked balance — it is not counted as spending. The purchases themselves are budgeted when they occur.</td></tr>
+    </tfoot>
+  </table>
+</div>
+
+<script>
+const NODES = [
+  { id: "nick-chq", lane: 0, name: "Nick — chequing", mask: "1177" },
+  { id: "sha-chq",  lane: 0, name: "Shanthi — chequing", mask: "4821" },
+  { id: "joint-chq", lane: 1, name: "Joint chequing", mask: "5540" },
+  { id: "joint-sav", lane: 2, grp: "save", name: "Joint savings", mask: "3305" },
+  { id: "vacation",  lane: 2, grp: "save", name: "Vacation fund — Japan", mask: "9914" },
+  { id: "nick-tfsa", lane: 2, grp: "save", name: "Nick — TFSA", mask: "8802" },
+  { id: "sha-fhsa",  lane: 2, grp: "save", name: "Shanthi — FHSA", mask: "2210" },
+  { id: "visa",      lane: 2, grp: "debt", name: "Visa — Nick", mask: "4412", debt: true },
+  { id: "amex",      lane: 2, grp: "debt", name: "Amex — joint", mask: "1005", debt: true },
+];
+const FLOWS = [
+  { from: "nick-chq", to: "joint-chq", type: "ops",  items: [["Jul 1", 1200], ["Jul 15", 1200]] },
+  { from: "sha-chq",  to: "joint-chq", type: "ops",  items: [["Jul 1", 1200], ["Jul 15", 1200]] },
+  { from: "joint-chq", to: "joint-sav", type: "save", items: [["Jul 2", 1500]] },
+  { from: "joint-sav", to: "vacation",  type: "save", items: [["Jul 3", 833]] },
+  { from: "nick-chq", to: "nick-tfsa",  type: "save", items: [["Jul 5", 250], ["Jul 19", 250]] },
+  { from: "sha-chq",  to: "sha-fhsa",   type: "save", items: [["Jul 5", 650]] },
+  { from: "nick-chq", to: "visa",       type: "debt", items: [["Jul 8", 925], ["Jul 24", 925]] },
+  { from: "joint-chq", to: "amex",      type: "debt", items: [["Jul 12", 940]] },
+];
+const BAND = { ops: "var(--band)", save: "var(--band-save)", debt: "var(--band-debt)" };
+const TYPE_LABEL = { ops: "operations", save: "savings & goals", debt: "debt payment" };
+const fmt = (n) => "$" + n.toLocaleString("en-CA");
+const total = (f) => f.items.reduce((s, [, a]) => s + a, 0);
+
+const LANE_X = [28, 410, 792];
+const NODE_W = 220, ROW_H = 74, TOP = 46;
+const SCALE = 44 / Math.max(...FLOWS.map(total));
+
+const diagram = document.getElementById("diagram");
+const laneNames = ["Personal accounts", "Joint hub", "Destinations"];
+laneNames.forEach((nm, i) => {
+  const el = document.createElement("div");
+  el.className = "grp"; el.textContent = nm;
+  el.style.left = LANE_X[i] + "px"; el.style.top = "18px";
+  diagram.appendChild(el);
+});
+
+const pos = {};
+const laneCount = [0, 0, 0];
+let lastGrp = null;
+for (const n of NODES) {
+  if (n.lane === 2 && n.grp !== lastGrp && laneCount[2] > 0) laneCount[2] += 0.35;
+  lastGrp = n.lane === 2 ? n.grp : lastGrp;
+  const y = TOP + laneCount[n.lane] * ROW_H + (n.lane === 1 ? ROW_H * 1.05 : 0);
+  laneCount[n.lane]++;
+  pos[n.id] = { x: LANE_X[n.lane], y };
+  const inn = FLOWS.filter(f => f.to === n.id).reduce((s, f) => s + total(f), 0);
+  const out = FLOWS.filter(f => f.from === n.id).reduce((s, f) => s + total(f), 0);
+  const el = document.createElement("div");
+  el.className = "node"; el.id = "n-" + n.id;
+  el.style.left = pos[n.id].x + "px"; el.style.top = y + "px";
+  el.innerHTML = `<div class="nm">${n.name} <span class="num" style="color:var(--ink-faint); font-weight:400;">····${n.mask}</span></div>
+    <div class="meta num"><span>${inn ? "in " + fmt(inn) : ""}</span><span>${out ? "out " + fmt(out) : ""}</span></div>
+    ${n.debt ? `<div class="note">linked to debt — balance syncs nightly</div>` : ""}`;
+  el.addEventListener("mouseenter", () => focusAccount(n.id));
+  el.addEventListener("mouseleave", clearFocus);
+  diagram.appendChild(el);
+}
+
+// Size each card to its band stack (sankey-node style): the taller of the
+// incoming and outgoing stacks, plus breathing room, so bands never spill
+// past the card edge. bandW/GAP must match draw() below.
+const GAP = 3;
+const stackHeight = (flows) =>
+  flows.reduce((s, f) => s + bandW(f), 0) + GAP * Math.max(0, flows.length - 1);
+for (const n of NODES) {
+  const need = Math.max(
+    stackHeight(FLOWS.filter(f => f.from === n.id)),
+    stackHeight(FLOWS.filter(f => f.to === n.id)),
+  );
+  document.getElementById("n-" + n.id).style.minHeight = Math.max(52, need + 22) + "px";
+}
+
+// Drag to rearrange: cards move freely, bands re-anchor live.
+for (const n of NODES) {
+  const el = document.getElementById("n-" + n.id);
+  el.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const start = { x: e.clientX, y: e.clientY, left: el.offsetLeft, top: el.offsetTop };
+    el.setPointerCapture(e.pointerId);
+    el.classList.add("dragging");
+    const move = (ev) => {
+      el.style.left = Math.max(0, start.left + ev.clientX - start.x) + "px";
+      el.style.top = Math.max(0, start.top + ev.clientY - start.y) + "px";
+      const needed = el.offsetTop + el.offsetHeight + 24;
+      if (needed > diagram.clientHeight) diagram.style.height = needed + "px";
+      draw();
+    };
+    const up = () => {
+      el.classList.remove("dragging");
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+  });
+}
+
+const H = TOP + Math.max(laneCount[0], 1.05 + laneCount[1], laneCount[2]) * ROW_H + 30;
+const svg = document.getElementById("bands");
+diagram.style.height = H + "px";
+
+function bandW(f) { return Math.max(3, total(f) * SCALE); }
+
+/**
+ * Bands are drawn in the diagram's real pixel space, anchored to the measured
+ * card edges, so dragging a card re-anchors its flows live. Per card, bands
+ * are stacked sorted by where their counterpart sits — flows fan out of a
+ * card in destination order instead of crossing each other at the edge.
+ */
+function draw() {
+  svg.innerHTML = "";
+  const base = diagram.getBoundingClientRect();
+  const R = {};
+  for (const n of NODES) {
+    const r = document.getElementById("n-" + n.id).getBoundingClientRect();
+    R[n.id] = { left: r.left - base.left, right: r.right - base.left, cy: r.top - base.top + r.height / 2 };
+  }
+
+  const yOut = {}, yIn = {};
+  for (const n of NODES) {
+    const outs = FLOWS.filter(f => f.from === n.id).sort((a, b) => R[a.to].cy - R[b.to].cy);
+    const ins = FLOWS.filter(f => f.to === n.id).sort((a, b) => R[a.from].cy - R[b.from].cy);
+    let oy = R[n.id].cy - stackHeight(outs) / 2;
+    for (const f of outs) { yOut[FLOWS.indexOf(f)] = oy + bandW(f) / 2; oy += bandW(f) + GAP; }
+    let iy = R[n.id].cy - stackHeight(ins) / 2;
+    for (const f of ins) { yIn[FLOWS.indexOf(f)] = iy + bandW(f) / 2; iy += bandW(f) + GAP; }
+  }
+
+  FLOWS.forEach((f, i) => {
+    const w = bandW(f);
+    const from = R[f.from], to = R[f.to];
+    // after a drag the target can end up left of the source — flip anchors
+    const forward = to.left >= from.right - 1;
+    const x1 = forward ? from.right : from.left;
+    const x2 = forward ? to.left : to.right;
+    const y1 = yOut[i], y2 = yIn[i];
+    const mx = (x1 + x2) / 2;
+    const d = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d);
+    path.setAttribute("class", "band");
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", BAND[f.type]);
+    path.setAttribute("stroke-width", w);
+    path.dataset.idx = i;
+    path.addEventListener("mouseenter", () => focusFlow(f));
+    path.addEventListener("mouseleave", clearFocus);
+    svg.appendChild(path);
+  });
+}
+draw();
+window.addEventListener("resize", draw);
+
+const rail = document.getElementById("rail");
+const railDefault = rail.innerHTML;
+function name(id) { return NODES.find(n => n.id === id).name; }
+function focusFlow(f) {
+  mark(x => x === f, id => id === f.from || id === f.to);
+  rail.innerHTML = `<div class="title">${name(f.from)} → ${name(f.to)} · <span class="num" style="color: var(--accent)">${fmt(total(f))}</span></div>
+    <div class="list">${f.items.map(([d, a]) => `<span>${d} <b class="num">${fmt(a)}</b></span>`).join("")}</div>`;
+}
+function focusAccount(id) {
+  const touched = new Set([id]);
+  FLOWS.forEach(f => { if (f.from === id || f.to === id) { touched.add(f.from); touched.add(f.to); } });
+  mark(f => f.from === id || f.to === id, nid => touched.has(nid));
+  const flows = FLOWS.filter(f => f.from === id || f.to === id);
+  const inn = flows.filter(f => f.to === id).reduce((s, f) => s + total(f), 0);
+  const out = flows.filter(f => f.from === id).reduce((s, f) => s + total(f), 0);
+  rail.innerHTML = `<div class="title">${name(id)} · <span class="num">in ${fmt(inn)}</span> · <span class="num">out ${fmt(out)}</span></div>
+    <div class="list">${flows.map(f => `<span>${f.from === id ? "→ " + name(f.to) : "← " + name(f.from)} <b class="num">${fmt(total(f))}</b></span>`).join("")}</div>`;
+}
+function mark(flowOn, nodeOn) {
+  document.querySelectorAll(".band").forEach(p => p.classList.toggle("dim", !flowOn(FLOWS[p.dataset.idx])));
+  document.querySelectorAll(".node").forEach(n => {
+    const id = n.id.slice(2);
+    n.classList.toggle("dim", !nodeOn(id));
+    n.classList.toggle("hot", nodeOn(id));
+  });
+}
+function clearFocus() {
+  document.querySelectorAll(".band, .node").forEach(el => el.classList.remove("dim", "hot"));
+  rail.innerHTML = railDefault;
+}
+
+const tbody = document.getElementById("tbody");
+tbody.innerHTML = [...FLOWS].sort((a, b) => total(b) - total(a)).map(f => `
+  <tr>
+    <td>${name(f.from)}</td>
+    <td>${name(f.to)}</td>
+    <td><span class="tag ${f.type}">${TYPE_LABEL[f.type]}</span></td>
+    <td class="r num">${f.items.length}</td>
+    <td class="r num" style="font-weight:600;">${fmt(total(f))}</td>
+  </tr>`).join("");
+</script>
+</body>
+</html>

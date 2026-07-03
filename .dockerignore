@@ -1,5 +1,3 @@
-node_modules
-dist
 # Never send local secrets (vault, DB, session grants) into the build context.
 data
 .env
@@ -7,3 +5,7 @@ data
 *.log
 .DS_Store
 *.xlsx
+**/node_modules
+# host-side web build output — the image builds its own in the web-build stage
+public
+web/.vite

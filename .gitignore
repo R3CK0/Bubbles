@@ -1,6 +1,10 @@
 node_modules/
 dist/
 
+# Vite build output (web/ builds into public/; the Docker image rebuilds it)
+public/index.html
+public/assets/
+
 # Local-only data: sqlite db, YubiKey identity/recipient, encrypted vault, session grants.
 # None of this should ever leave this machine.
 data/

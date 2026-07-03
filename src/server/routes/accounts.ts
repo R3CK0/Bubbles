@@ -4,16 +4,12 @@ import { vaultGuard } from "../middleware/vaultGuard.js";
 import { asyncHandler } from "../asyncHandler.js";
 import { requireParam } from "../params.js";
 import { classifyAccount, fetchItemAccounts, listItemAccounts } from "../../plaid/accounts.js";
-import { REGISTERED_TYPES, listPersons } from "../../db/repository.js";
+import { REGISTERED_TYPES } from "../../db/repository.js";
 import { Vault } from "../../vault/vault.js";
 
+// GET /api/persons moved to routes/persons.ts (DB-only, no vault guard).
 export const accountsRouter = Router();
 accountsRouter.use(vaultGuard);
-
-/** Persons available to assign accounts to (for the classify wizard UI). */
-accountsRouter.get("/api/persons", (_req, res) => {
-  res.json({ persons: listPersons() });
-});
 
 /** Locally-stored accounts for one item, including classification state. */
 accountsRouter.get("/api/items/:itemId/accounts", (req, res) => {

@@ -72,6 +72,17 @@ export function personExists(personId: string): boolean {
   return Boolean(getDb().prepare(`SELECT 1 FROM persons WHERE person_id = ?`).get(personId));
 }
 
+export function insertPerson(personId: string, displayName: string, color: string | null): PersonRow {
+  getDb()
+    .prepare(
+      `INSERT INTO persons (person_id, display_name, color, created_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(person_id) DO UPDATE SET display_name = excluded.display_name, color = excluded.color`,
+    )
+    .run(personId, displayName, color, new Date().toISOString());
+  return getDb().prepare(`SELECT * FROM persons WHERE person_id = ?`).get(personId) as PersonRow;
+}
+
 export function upsertItem(row: Omit<ItemRow, "sync_cursor" | "last_synced_at"> & Partial<Pick<ItemRow, "sync_cursor" | "last_synced_at">>) {
   getDb()
     .prepare(

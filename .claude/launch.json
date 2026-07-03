@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "bubbles",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dist/index.js"],
+      "port": 4000
+    },
+    {
+      "name": "mockup-static",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["docs/mockups/_serve.mjs"],
+      "port": 4200
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd web && API_PROXY=${API_PROXY:-http://localhost:4000} npm run dev"],
+      "port": 5173
+    }
+  ]
+}

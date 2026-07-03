@@ -11,8 +11,12 @@ export { loadSessionMeta, isSessionValid, revokeGrant as revokeSession } from ".
  * (i.e. one just decrypted with the physical YubiKey). Hard-caps requested
  * duration at config.session.maxDays.
  */
-export function createSessionGrant(vault: Vault, requestedDays = config.session.defaultDays): store.SessionMeta {
-  return store.createGrant(vault.serialize(), requestedDays);
+export function createSessionGrant(
+  vault: Vault,
+  requestedDays = config.session.defaultDays,
+  portable = false,
+): store.SessionMeta {
+  return store.createGrant(vault.serialize(), requestedDays, portable);
 }
 
 /**

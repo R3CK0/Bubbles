@@ -1,0 +1,61 @@
+*{box-sizing:border-box}
+:root{--bg:#101413;--surface:#181D1B;--surface-2:#1F2624;--ink:#E8ECEA;--ink-muted:#8A948F;--accent:#34D399;--accent-soft:#34D39918;--gold:#D9B36C;--warn:#F5B04C;--danger:#F0716A;--line:rgba(255,255,255,0.08);--shadow:0 18px 42px rgba(0,0,0,0.35)}
+[data-theme="light"]{--bg:#F6F7F6;--surface:#FFFFFF;--surface-2:#EEF1EF;--ink:#1A201E;--ink-muted:#66706B;--accent:#0F766E;--accent-soft:#0F766E14;--gold:#A97F2D;--warn:#B4690E;--danger:#B3382F;--line:rgba(0,0,0,0.07);--shadow:0 18px 42px rgba(0,0,0,0.12)}
+html,body{margin:0;padding:0;height:100%}
+#root{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,sans-serif;-webkit-font-smoothing:antialiased;font-size:14px}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:rgba(128,128,128,.28);border-radius:8px}
+::-webkit-scrollbar-track{background:transparent}
+input,select,textarea,button{font-family:inherit;color:inherit;font-size:13px}
+@keyframes bb-drift{0%{transform:translate(0,0)}50%{transform:translate(6%,4%)}100%{transform:translate(0,0)}}
+@keyframes bb-breathe{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.4)}}
+@keyframes bb-spin{to{transform:rotate(360deg)}}
+@keyframes bb-pop{0%{transform:scale(0)}70%{transform:scale(1.3)}100%{transform:scale(1)}}
+@keyframes bb-popin{0%{opacity:0;transform:scale(.96)}100%{opacity:1;transform:scale(1)}}
+@keyframes bb-rowin{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+@keyframes bb-slidein{from{opacity:0;transform:translateX(26px)}to{opacity:1;transform:none}}
+@keyframes bb-drawerin{from{transform:translateX(100%)}to{transform:none}}
+@keyframes bb-toastin{from{opacity:0;transform:translate(-50%,14px)}to{opacity:1;transform:translate(-50%,0)}}
+@keyframes bb-pulse{0%,100%{opacity:.45}50%{opacity:.9}}
+@keyframes bb-pagein{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow)}
+.panel{background:var(--surface-2);border-radius:12px}
+.muted{color:var(--ink-muted)}
+.num{font-variant-numeric:tabular-nums}
+.h1{font-size:20px;font-weight:600}
+.label{font-size:11.5px;font-weight:600;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.05em}
+.row{display:flex;align-items:center;gap:10px}
+.spread{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.col{display:flex;flex-direction:column}
+.page{animation:bb-pagein .25s ease-out;padding:24px;max-width:1440px;margin:0 auto}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 14px;background:var(--accent);color:var(--bg);border:none;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:transform .12s}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.5;cursor:default}
+.btn-ghost{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;background:var(--surface-2);color:var(--ink-muted);border:1px solid var(--line);border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap}
+.btn-ghost:hover{color:var(--ink)}
+.btn-danger{background:var(--danger);color:#fff}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:6px;background:var(--surface-2);color:var(--ink-muted)}
+.chip-accent{background:var(--accent-soft);color:var(--accent)}
+.input{width:100%;padding:9px 11px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;outline:none}
+.input:focus{border-color:var(--accent)}
+.seg{position:relative;display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:3px}
+.seg-item{position:relative;z-index:1;padding:6px 14px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;color:var(--ink-muted);transition:color .25s,background .25s;white-space:nowrap}
+.seg-item.on{background:var(--accent);color:var(--bg)}
+.seg-2 .seg-item.on{background:var(--surface-2);color:var(--ink)}
+.hoverable{transition:background .15s;border-radius:10px}
+.hoverable:hover{background:var(--surface-2)}
+.link{color:var(--accent);cursor:pointer;font-weight:600}
+.tablehead{font-size:11px;font-weight:700;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em}
+.overlay{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:24px}
+.sheet{background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);max-height:92vh;overflow-y:auto;animation:bb-popin .18s ease-out}
+.drawer{position:fixed;top:0;right:0;bottom:0;z-index:90;width:420px;max-width:92vw;background:var(--surface);border-left:1px solid var(--line);box-shadow:var(--shadow);animation:bb-drawerin .25s cubic-bezier(.3,0,.2,1);overflow-y:auto}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.bar-track{position:relative;height:9px;border-radius:6px;background:var(--surface-2);overflow:hidden}
+.bar-fill{position:absolute;left:0;top:0;bottom:0;border-radius:6px;transition:width .8s cubic-bezier(.3,0,.2,1)}
+.empty{padding:28px;text-align:center;color:var(--ink-muted);font-size:12.5px}
+.spin{animation:bb-spin 1s linear infinite}
+.tip-dot{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:5px;border-radius:50%;background:var(--surface-2);border:1px solid var(--line);color:var(--ink-muted);font-size:9.5px;font-weight:700;cursor:help;flex:none}
+.tip-pop{position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);z-index:80;width:max-content;max-width:280px;padding:9px 11px;background:var(--surface);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow);color:var(--ink);font-size:11.5px;font-weight:400;line-height:1.55;text-align:left;text-transform:none;letter-spacing:0;white-space:normal;pointer-events:none;animation:bb-popin .12s ease-out;font-variant-numeric:normal}

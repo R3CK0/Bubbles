@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Account flows — July 2026 (mockup)</title>
+<!--
+  MOCKUP for review: "how money moved between our accounts this month".
+  Concept: a transfer map — account cards grouped by owner (Nick | Joint |
+  Shanthi), with curved ribbons between cards. Ribbon width ∝ amount moved,
+  animated dashes show direction, hover a ribbon or a card for detail.
+  Sample data only; the real page would feed it from transfer-pair
+  transactions (is_transfer = 1, grouped by transfer_group_id).
+-->
+<style>
+  :root {
+    --bg: #101216; --surface: #191c22; --surface-2: #22262e; --line: rgba(255,255,255,.08);
+    --ink: #e8eaed; --ink-muted: #9aa1ab; --accent: #45d483; --warn: #e6b84c;
+    --purple: #9d8cff; --teal: #3fc3ad; --gray: #7d8590;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 32px; }
+  .num { font-variant-numeric: tabular-nums; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; }
+  h1 { font-size: 17px; font-weight: 600; margin: 0; }
+  .muted { color: var(--ink-muted); }
+
+  .board { position: relative; max-width: 980px; margin: 18px auto 0; padding: 22px 40px 10px; }
+  .cols { position: relative; display: grid; grid-template-columns: 1fr 1fr 1fr; column-gap: 130px; z-index: 2; }
+  .col-title { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-muted); margin-bottom: 10px; text-align: center; }
+  .acct { position: relative; background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 48px; transition: outline-color .15s, opacity .2s; outline: 1px solid transparent; }
+  .acct.dim { opacity: .35; }
+  .acct.hot { outline-color: var(--accent); }
+  .acct .name { font-size: 13px; font-weight: 600; }
+  .acct .mask { font-size: 11px; color: var(--ink-muted); margin-left: 6px; }
+  .net { float: right; font-size: 11.5px; font-weight: 700; border-radius: 999px; padding: 1px 8px; }
+  .net.in { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .net.out { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+
+  svg.ribbons { position: absolute; inset: 0; z-index: 1; overflow: visible; }
+  .ribbon { fill: none; stroke-linecap: round; transition: opacity .2s; }
+  .ribbon.flowing { stroke-dasharray: 10 14; animation: flow 1.1s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -24; } }
+  .ribbon.dim { opacity: .12; }
+  .hit { fill: none; stroke: transparent; stroke-width: 18; cursor: pointer; }
+
+  .tip { position: absolute; z-index: 3; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 12px; pointer-events: none; display: none; min-width: 200px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .tip .rowline { display: flex; justify-content: space-between; gap: 16px; padding: 1.5px 0; color: var(--ink-muted); }
+  .legend { display: flex; gap: 18px; justify-content: center; margin-top: 18px; font-size: 11.5px; color: var(--ink-muted); }
+  .legend b { display: inline-block; width: 18px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+  .kpis { display: flex; gap: 24px; align-items: baseline; }
+</style>
+</head>
+<body>
+
+<div style="max-width: 980px; margin: 0 auto;" class="card">
+  <div style="padding: 20px 24px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: baseline;">
+    <div>
+      <h1>Money between accounts · July 2026</h1>
+      <div class="muted" style="font-size: 12px; margin-top: 2px;">ribbon width = amount moved · dashes flow from source to destination · hover for detail</div>
+    </div>
+    <div class="kpis num">
+      <span class="muted" style="font-size:12px;">moved <b style="color:var(--ink); font-size:16px;">$8,463</b></span>
+      <span class="muted" style="font-size:12px;">transfers <b style="color:var(--ink); font-size:16px;">11</b></span>
+    </div>
+  </div>
+
+  <div class="board">
+    <svg class="ribbons" id="ribbons"></svg>
+    <div class="cols" id="cols">
+      <div data-col="0"><div class="col-title">Nick</div></div>
+      <div data-col="1"><div class="col-title">Joint</div></div>
+      <div data-col="2"><div class="col-title">Shanthi</div></div>
+    </div>
+    <div class="tip" id="tip"></div>
+    <div class="legend">
+      <span><b style="background: var(--purple)"></b>contributions to joint</span>
+      <span><b style="background: var(--teal)"></b>into savings &amp; goals</span>
+      <span><b style="background: var(--gray)"></b>other moves</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const ACCOUNTS = [
+  { id: "nick-chq", col: 0, name: "Chequing", mask: "1177" },
+  { id: "nick-tfsa", col: 0, name: "TFSA · Wealthsimple", mask: "8802" },
+  { id: "joint-chq", col: 1, name: "Joint chequing", mask: "5540" },
+  { id: "joint-sav", col: 1, name: "Joint savings", mask: "3305" },
+  { id: "vacation", col: 1, name: "Vacation fund · Japan", mask: "9914" },
+  { id: "sha-chq", col: 2, name: "Chequing", mask: "4821" },
+  { id: "sha-fhsa", col: 2, name: "FHSA", mask: "2210" },
+];
+const TRANSFERS = [
+  { from: "nick-chq", to: "joint-chq", kind: "joint", items: [["Jul 1", 1200], ["Jul 15", 1200]] },
+  { from: "sha-chq",  to: "joint-chq", kind: "joint", items: [["Jul 1", 1200], ["Jul 15", 1200]] },
+  { from: "joint-chq", to: "joint-sav", kind: "save", items: [["Jul 2", 1500]] },
+  { from: "joint-sav", to: "vacation", kind: "save", items: [["Jul 3", 833]] },
+  { from: "nick-chq", to: "nick-tfsa", kind: "save", items: [["Jul 5", 250], ["Jul 19", 250]] },
+  { from: "sha-chq",  to: "sha-fhsa", kind: "save", items: [["Jul 5", 650]] },
+  { from: "joint-chq", to: "nick-chq", kind: "other", items: [["Jul 22", 180]] },
+];
+const COLORS = { joint: getCss("--purple"), save: getCss("--teal"), other: getCss("--gray") };
+function getCss(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+const fmt = (n) => "$" + n.toLocaleString("en-CA");
+const total = (t) => t.items.reduce((s, [, a]) => s + a, 0);
+
+const cols = document.getElementById("cols");
+for (const a of ACCOUNTS) {
+  const net = TRANSFERS.reduce((s, t) => s + (t.to === a.id ? total(t) : 0) - (t.from === a.id ? total(t) : 0), 0);
+  const el = document.createElement("div");
+  el.className = "acct"; el.id = "acct-" + a.id;
+  el.innerHTML = `<span class="net num ${net >= 0 ? "in" : "out"}">${net >= 0 ? "▲" : "▼"} ${fmt(Math.abs(net))}</span>
+    <span class="name">${a.name}</span><span class="mask num">····${a.mask}</span>`;
+  cols.querySelector(`[data-col="${a.col}"]`).appendChild(el);
+  el.addEventListener("mouseenter", () => focusAccount(a.id));
+  el.addEventListener("mouseleave", clearFocus);
+}
+
+const svg = document.getElementById("ribbons");
+const tip = document.getElementById("tip");
+const board = document.querySelector(".board");
+const maxT = Math.max(...TRANSFERS.map(total));
+
+function anchor(accId, side) {
+  const r = document.getElementById("acct-" + accId).getBoundingClientRect();
+  const b = board.getBoundingClientRect();
+  return { x: (side === "left" ? r.left : r.right) - b.left, y: r.top - b.top + r.height / 2 };
+}
+
+function draw() {
+  svg.innerHTML = "";
+  svg.setAttribute("width", board.clientWidth);
+  svg.setAttribute("height", board.clientHeight);
+  TRANSFERS.forEach((t, i) => {
+    const fromCol = ACCOUNTS.find(a => a.id === t.from).col;
+    const toCol = ACCOUNTS.find(a => a.id === t.to).col;
+    let p1, p2, d;
+    if (fromCol === toCol) {
+      p1 = anchor(t.from, "right"); p2 = anchor(t.to, "right");
+      const bulge = 52 + (i % 3) * 14;
+      d = `M ${p1.x} ${p1.y} C ${p1.x + bulge} ${p1.y}, ${p2.x + bulge} ${p2.y}, ${p2.x} ${p2.y}`;
+    } else {
+      const leftToRight = fromCol < toCol;
+      p1 = anchor(t.from, leftToRight ? "right" : "left");
+      p2 = anchor(t.to, leftToRight ? "left" : "right");
+      const mx = (p1.x + p2.x) / 2;
+      d = `M ${p1.x} ${p1.y} C ${mx} ${p1.y}, ${mx} ${p2.y}, ${p2.x} ${p2.y}`;
+    }
+    const w = 2.5 + 9 * (total(t) / maxT);
+    const path = mk("path", { d, class: "ribbon flowing", stroke: COLORS[t.kind], "stroke-width": w, opacity: .85 });
+    path.dataset.idx = i;
+    const hit = mk("path", { d, class: "hit" });
+    hit.dataset.idx = i;
+    hit.addEventListener("mouseenter", (e) => showTip(t, e));
+    hit.addEventListener("mousemove", (e) => moveTip(e));
+    hit.addEventListener("mouseleave", clearFocus);
+    svg.appendChild(path); svg.appendChild(hit);
+  });
+}
+function mk(tag, attrs) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+function name(id) { const a = ACCOUNTS.find(x => x.id === id); return a.name; }
+function showTip(t, e) {
+  focusPair(t);
+  tip.style.display = "block";
+  tip.innerHTML = `<div style="font-weight:600; margin-bottom:4px;">${name(t.from)} → ${name(t.to)}</div>
+    <div class="num" style="font-size:16px; font-weight:700; color: var(--accent); margin-bottom: 6px;">${fmt(total(t))}</div>
+    ${t.items.map(([d2, a]) => `<div class="rowline"><span>${d2}</span><span class="num">${fmt(a)}</span></div>`).join("")}`;
+  moveTip(e);
+}
+function moveTip(e) {
+  const b = board.getBoundingClientRect();
+  tip.style.left = Math.min(e.clientX - b.left + 14, board.clientWidth - 230) + "px";
+  tip.style.top = (e.clientY - b.top + 14) + "px";
+}
+function focusPair(t) {
+  document.querySelectorAll(".ribbon").forEach(r => r.classList.toggle("dim", TRANSFERS[r.dataset.idx] !== t));
+  document.querySelectorAll(".acct").forEach(a => {
+    const on = a.id === "acct-" + t.from || a.id === "acct-" + t.to;
+    a.classList.toggle("dim", !on); a.classList.toggle("hot", on);
+  });
+}
+function focusAccount(id) {
+  const touched = new Set([id]);
+  document.querySelectorAll(".ribbon").forEach(r => {
+    const t = TRANSFERS[r.dataset.idx];
+    const on = t.from === id || t.to === id;
+    r.classList.toggle("dim", !on);
+    if (on) { touched.add(t.from); touched.add(t.to); }
+  });
+  document.querySelectorAll(".acct").forEach(a => a.classList.toggle("dim", !touched.has(a.id.slice(5))));
+}
+function clearFocus() {
+  tip.style.display = "none";
+  document.querySelectorAll(".ribbon, .acct").forEach(el => el.classList.remove("dim", "hot"));
+}
+
+draw();
+window.addEventListener("resize", draw);
+</script>
+</body>
+</html>

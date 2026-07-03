@@ -1,12 +1,14 @@
 import { Router } from "express";
 import { Vault } from "../../vault/vault.js";
 import { isSessionValid, loadSessionMeta } from "../../vault/session.js";
+import { ensureVault } from "../middleware/vaultGuard.js";
 
 export const vaultStatusRouter = Router();
 
-/** Read-only status. Never returns secret material. */
+/** Status (never returns secret material). Retries the session grant, so the
+ *  web app's poll auto-unlocks a running server after `grant-session`. */
 vaultStatusRouter.get("/api/vault/status", (req, res) => {
-  const vault = req.app.locals.vault as Vault | undefined;
+  const vault = ensureVault(req.app);
   const meta = loadSessionMeta();
   res.json({
     initialized: Vault.isInitialized(),

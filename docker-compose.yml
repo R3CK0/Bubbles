@@ -15,6 +15,9 @@ services:
       # container. See README.md "Docker deployment".
       - ./data:/app/data
     environment:
-      PLAID_COUNTRY_CODES: ${PLAID_COUNTRY_CODES:-US}
+      PLAID_COUNTRY_CODES: ${PLAID_COUNTRY_CODES:-CA}
       PLAID_LANGUAGE: ${PLAID_LANGUAGE:-en}
       PLAID_PRODUCTS: ${PLAID_PRODUCTS:-transactions}
+      # Gemini expense-review assistant (optional — feature is disabled without it)
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}

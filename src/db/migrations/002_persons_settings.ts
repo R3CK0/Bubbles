@@ -1,6 +1,6 @@
 // Persons are the ownership lens every later table hangs off (person_id,
-// nullable = joint). Seeded with the two household members named throughout
-// docs/DATA_MODEL.md and docs/PLATFORM_PROPOSAL.md.
+// nullable = joint). Deliberately NOT seeded: the database starts clean and
+// household members are created by the onboarding wizard (POST /api/persons).
 export const migration = {
   version: 2,
   name: "persons_settings",
@@ -16,10 +16,6 @@ CREATE TABLE settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
-
-INSERT INTO persons (person_id, display_name, created_at) VALUES
-  ('nick', 'Nick', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  ('shanthi', 'Shanthi', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 INSERT INTO settings (key, value) VALUES
   ('base_currency', 'CAD');

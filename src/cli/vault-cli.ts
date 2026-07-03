@@ -84,6 +84,11 @@ program
       "so the server can run unattended. Must be re-run with the YubiKey to refresh before it expires.",
   )
   .option("--days <n>", `Requested validity in days (capped at ${config.session.maxDays})`, (v) => Number(v), config.session.defaultDays)
+  .option(
+    "--portable",
+    "Also write the session key to data/vault/session.key (0600) so a Docker container sharing ./data can use the grant. Required for docker compose on a macOS host.",
+    false,
+  )
   .action(action((opts) => {
     if (!Vault.isInitialized()) {
       console.error("Vault has not been initialized. Run: npm run vault -- init");
@@ -92,9 +97,10 @@ program
     }
     console.log("Touch your YubiKey to unlock the vault and issue the session grant...");
     const vault = Vault.unlockWithYubikey();
-    const meta = createSessionGrant(vault, opts.days);
+    const meta = createSessionGrant(vault, opts.days, opts.portable);
     console.log(`Session grant issued. Valid until ${meta.expiresAt} (${meta.maxDays} days).`);
-    console.log("The server can now start without the YubiKey present until that time.");
+    if (opts.portable) console.log("Portable: the session key is on disk next to the grant, so the Docker container can use it.");
+    console.log("A running server (local or container) picks the grant up automatically within a minute — no restart needed.");
   }));
 
 program

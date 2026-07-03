@@ -9,6 +9,11 @@ import { migration as m008 } from "./008_investments.js";
 import { migration as m009 } from "./009_tax.js";
 import { migration as m010 } from "./010_ops.js";
 import { migration as m011 } from "./011_account_classification.js";
+import { migration as m012 } from "./012_manual_positions.js";
+import { migration as m013 } from "./013_weekly_take_home.js";
+import { migration as m014 } from "./014_goal_tagged_transactions.js";
+import { migration as m015 } from "./015_mapping_rules.js";
+import { migration as m016 } from "./016_debt_statements.js";
 
 export interface Migration {
   version: number;
@@ -29,4 +34,9 @@ export const MIGRATIONS: Migration[] = [
   m009,
   m010,
   m011,
+  m012,
+  m013,
+  m014,
+  m015,
+  m016,
 ];

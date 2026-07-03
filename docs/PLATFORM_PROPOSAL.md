@@ -93,7 +93,7 @@ Tagged **[R]** = requested, **[+]** = proposed addition we shouldn't forget.
 - **[+]** Net worth: assets − debts over time, the single headline chart; milestone markers ($150k, $200k…).
 - **[+]** Dividend/distribution income tracking.
 - **[+]** Allocation drift alert vs. target allocation (foundation for later rebalancing suggestions).
-- Data source note: Plaid CA coverage confirmed for all our institutions including Wealthsimple — Plaid `investments`/`liabilities` is the primary path, with CSV import + manual entry kept as a backstop for anything Plaid can't see (e.g., the Buildings stake).
+- Data source note (revised): Plaid's `investments` product needs production-tier access, so **portfolio state is user-maintained**: the user enters each account's positions (stocks/ETFs/crypto by market symbol; options/cash at self-maintained value), the platform pulls daily prices from public market data (Yahoo Finance chart API, no key) and rebuilds portfolio history from position windows × price history. A per-account **reconciliation drift** (computed positions vs. the Plaid-synced account balance) tells the user when their entries are stale. Plaid stays the source for balances and cash-flow transactions.
 
 ### F. Taxes & registered accounts — federal + Québec **[R]**
 
