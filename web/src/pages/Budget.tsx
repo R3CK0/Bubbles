@@ -27,6 +27,12 @@ export function Budget() {
   const versions = useApi<{ versions: BudgetVersion[] }>(["budget.versions"], versionsOpen ? "/api/budget/versions" : null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [edits, setEdits] = useState<Record<string, number>>({});
+  const [clearOpen, setClearOpen] = useState(false);
+
+  const clearBudget = useAction(
+    () => api("/api/budget/reset", { method: "POST", json: { effectiveFrom: month } }),
+    ["budget", "overview", "cashflow"],
+  );
 
   const saveBudget = useAction(
     (lines: { categoryId: string; personId: string | null; monthlyAmount: number }[]) =>
@@ -45,8 +51,22 @@ export function Budget() {
 
   const rows = view.data?.rows ?? [];
   const topExpense = rows.filter((r) => r.kind === "expense" && r.parentId === null);
-  const subsOf = (id: string) => rows.filter((r) => r.parentId === id);
+  // subcategories come from the category tree, not the budget rows — a fresh
+  // subcategory has no budget line and no spend yet, but must still render
+  const rowByCat = useMemo(() => new Map(rows.map((r) => [r.categoryId, r])), [rows]);
+  const cats = categories.data?.categories ?? [];
+  const subsOf = (id: string) =>
+    cats
+      .filter((c) => c.parent_id === id && !c.archived)
+      .map((c) => ({
+        categoryId: c.category_id,
+        name: c.name,
+        budget: rowByCat.get(c.category_id)?.budget ?? 0,
+        actual: rowByCat.get(c.category_id)?.actual ?? 0,
+      }));
+  const incomeRows = rows.filter((r) => r.kind === "income" && (r.budget > 0 || r.actual !== 0)).sort((a, b) => b.budget - a.budget);
   const incomeBudget = rows.filter((r) => r.kind === "income").reduce((t, r) => t + r.budget, 0);
+  const incomeActual = rows.filter((r) => r.kind === "income").reduce((t, r) => t + r.actual, 0);
   const expenseBudget = rows.filter((r) => r.kind === "expense" && r.parentId === null).reduce((t, r) => t + r.budget, 0);
   const remaining = incomeBudget - expenseBudget;
   const narrativeFor = (id: string) => variances.data?.narratives.find((n) => n.categoryId === id);
@@ -67,10 +87,11 @@ export function Budget() {
         </div>
         <div className="row" style={{ gap: 18 }}>
           <div className="muted" style={{ textAlign: "right", fontSize: 12, lineHeight: 1.8 }}>
-            <div>Income budget <span className="num" style={{ color: "var(--ink)", fontWeight: 600 }}>{fmt(incomeBudget)}</span></div>
-            <div>Budgeted <span className="num" style={{ color: "var(--ink)", fontWeight: 600 }}>{fmt(expenseBudget)}</span></div>
+            <div>Income <span className="num" style={{ color: "var(--accent)", fontWeight: 600 }}>{fmt(incomeActual)}</span> <span className="num" style={{ opacity: 0.7 }}>/ {fmt(incomeBudget)} budget</span></div>
+            <div>Budgeted spending <span className="num" style={{ color: "var(--ink)", fontWeight: 600 }}>{fmt(expenseBudget)}</span></div>
           </div>
           <button className="btn-ghost" onClick={() => setVersionsOpen(true)}>History</button>
+          <button className="btn-ghost" style={{ color: "var(--danger)" }} onClick={() => setClearOpen(true)}>Clear budget</button>
         </div>
       </Card>
 
@@ -106,6 +127,35 @@ export function Budget() {
 
       {tab === "budget" && (
         <Card style={{ padding: 8 }}>
+          {incomeRows.length > 0 && (
+            <>
+              <div className="label" style={{ padding: "10px 16px 0" }}>
+                Income<Tip text="What actually landed vs the plan. The income budget derives from Settings → Household income (take-home + extra income after tax); categorize deposits as income from the Inbox to fill the bar." />
+              </div>
+              {incomeRows.map((r) => {
+                const fillPct = r.budget > 0 ? Math.min(1, r.actual / r.budget) : r.actual > 0 ? 1 : 0;
+                return (
+                  <div key={r.categoryId} style={{ padding: "14px 16px", borderRadius: 12 }}>
+                    <div className="row" style={{ gap: 14 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div className="spread" style={{ alignItems: "baseline", marginBottom: 8 }}>
+                          <div style={{ fontSize: 13.5, fontWeight: 600 }}>{r.name}</div>
+                          <div className="muted num" style={{ fontSize: 12 }}>{fmt(r.actual)} <span style={{ opacity: 0.6 }}>/ {fmt(r.budget)}</span></div>
+                        </div>
+                        <div className="bar-track">
+                          <div className="bar-fill" style={{ width: `${fillPct * 100}%`, background: "var(--accent)" }} />
+                        </div>
+                      </div>
+                      <div className="num" style={{ fontSize: 12, fontWeight: 600, minWidth: 84, textAlign: "right", color: r.variance >= 0 ? "var(--accent)" : "var(--warn)" }}>
+                        {r.budget > 0 ? fmtDelta(r.variance) : ""}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="label" style={{ padding: "10px 16px 0", borderTop: "1px solid var(--line)" }}>Spending</div>
+            </>
+          )}
           {topExpense.length === 0 && <EmptyState text="No budget lines yet — set amounts from the category rows or run the setup wizard." />}
           {topExpense.map((r) => {
             const over = r.actual > r.budget && r.budget > 0;
@@ -115,7 +165,7 @@ export function Budget() {
             const editVal = edits[r.categoryId] ?? r.budget;
             return (
               <div key={r.categoryId} style={{ padding: "14px 16px", borderRadius: 12 }}>
-                <div className="row" style={{ gap: 14, cursor: "pointer" }} onClick={() => setExpanded(isOpen ? null : r.categoryId)}>
+                <div className="row" style={{ gap: 14, cursor: "pointer" }} onClick={() => { setExpanded(isOpen ? null : r.categoryId); setSubDraft(""); }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div className="spread" style={{ alignItems: "baseline", marginBottom: 8 }}>
                       <div style={{ fontSize: 13.5, fontWeight: 600 }}>{r.name}</div>
@@ -201,6 +251,28 @@ export function Budget() {
       {tab === "inbox" && <Inbox categories={categories.data?.categories ?? []} />}
       {tab === "manage" && <Manage categories={categories.data?.categories ?? []} />}
 
+      {clearOpen && (
+        <Modal title="Clear the budget?" onClose={() => setClearOpen(false)}>
+          <div className="col" style={{ gap: 14 }}>
+            <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+              This wipes every budget amount from <b>{monthLabel(month)}</b> onward so you can build a fresh one —
+              set new amounts from the category rows below afterwards.
+            </div>
+            <div className="muted" style={{ fontSize: 12, lineHeight: 1.5 }}>
+              Budgets are versioned: past months keep the budget they had, and the cleared version shows up in History.
+              Income keeps deriving from Settings → Household income.
+            </div>
+            <div className="row" style={{ gap: 10, justifyContent: "flex-end" }}>
+              <button className="btn-ghost" onClick={() => setClearOpen(false)}>Cancel</button>
+              <button className="btn" style={{ background: "var(--danger)" }} disabled={clearBudget.isPending}
+                onClick={() => { clearBudget.mutate(); setClearOpen(false); }}>
+                Clear from {monthLabel(month)}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {versionsOpen && (
         <Modal title="Budget versions" onClose={() => setVersionsOpen(false)}>
           <div className="col" style={{ gap: 8 }}>
@@ -250,6 +322,12 @@ function Inbox({ categories }: { categories: Category[] }) {
   );
 
   const card = inbox.data?.cards[0];
+
+  // picking a category that has subcategories expands it first — the user can
+  // still leave the transaction at the parent level
+  const [expandedParent, setExpandedParent] = useState<string | null>(null);
+  useEffect(() => setExpandedParent(null), [card?.transaction.transactionId]);
+  const childrenOf = (id: string) => categories.filter((c) => c.parent_id === id && !c.archived);
 
   const fetchSuggestion = (transactionId: string) => {
     setAiLoading(true);
@@ -313,12 +391,18 @@ function Inbox({ categories }: { categories: Category[] }) {
     return li ? `${g.name} → ${li.name}` : g.name;
   };
 
+  // deposits (Plaid amount < 0) offer income targets first — salary, rental,
+  // any income subcategory — then expense tops (a deposit can be a refund);
+  // money out sticks to expense categories
   const options = useMemo(() => {
-    const tops = categories.filter((c) => c.parent_id === null && c.kind === "expense" && !c.archived);
-    if (!card) return tops.slice(0, 9);
-    const suggested = categories.find((c) => c.category_id === card.suggestedCategoryId);
-    const rest = tops.filter((c) => c.category_id !== suggested?.category_id);
-    return suggested ? [suggested, ...rest].slice(0, 9) : tops.slice(0, 9);
+    if (!card) return [];
+    const deposit = card.transaction.amount > 0; // signed flow: positive = money in
+    const income = categories.filter((c) => c.kind === "income" && !c.archived);
+    const expenseTops = categories.filter((c) => c.parent_id === null && c.kind === "expense" && !c.archived);
+    const pool = deposit ? [...income, ...expenseTops] : expenseTops;
+    const suggested = pool.find((c) => c.category_id === card.suggestedCategoryId);
+    const rest = pool.filter((c) => c.category_id !== suggested?.category_id);
+    return (suggested ? [suggested, ...rest] : pool).slice(0, 9);
   }, [categories, card]);
 
   if (!inbox.data) return <Card><div className="empty">Loading…</div></Card>;
@@ -349,10 +433,14 @@ function Inbox({ categories }: { categories: Category[] }) {
       )}
       <div style={{ textAlign: "center", padding: "26px 0 20px", animation: "bb-popin .2s ease-out" }} key={card.transaction.transactionId}>
         <div style={{ fontSize: 22, fontWeight: 600 }}>{card.transaction.merchant ?? "Unknown merchant"}</div>
-        <div className="num" style={{ fontSize: 30, fontWeight: 600, marginTop: 8, color: card.transaction.amount > 0 ? "var(--ink)" : "var(--accent)" }}>
+        <div className="num" style={{ fontSize: 30, fontWeight: 600, marginTop: 8, color: card.transaction.amount > 0 ? "var(--accent)" : "var(--ink)" }}>
           {fmt(Math.abs(card.transaction.amount))}
         </div>
-        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>{dayLabel(card.transaction.date)}{card.transaction.plaidPrimary && <span className="chip" style={{ marginLeft: 8 }}>{card.transaction.plaidPrimary.toLowerCase().replace(/_/g, " ")}</span>}</div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+          {dayLabel(card.transaction.date)}
+          {card.transaction.amount > 0 && <span className="chip chip-accent" style={{ marginLeft: 8 }}>↓ money in</span>}
+          {card.transaction.plaidPrimary && <span className="chip" style={{ marginLeft: 8 }}>{card.transaction.plaidPrimary.toLowerCase().replace(/_/g, " ")}</span>}
+        </div>
       </div>
 
       {aiStatus.data?.enabled && (
@@ -400,16 +488,47 @@ function Inbox({ categories }: { categories: Category[] }) {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
-        {options.map((c, i) => (
-          <button key={c.category_id}
-            className={i === 0 && card.suggestedCategoryId === c.category_id ? "btn" : "btn-ghost"}
-            style={{ justifyContent: "center" }}
-            onClick={() => categorize.mutate({ transactionId: card.transaction.transactionId, categoryId: c.category_id, merchant: card.transaction.merchant })}>
-            {i + 1}. {c.name}
-          </button>
-        ))}
-        <button className="btn-ghost" style={{ justifyContent: "center", gridColumn: "span 3" }}
+      {expandedParent ? (
+        <div className="col" style={{ gap: 8, animation: "bb-popin .16s ease-out" }}>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn-ghost" style={{ padding: "5px 10px" }} onClick={() => setExpandedParent(null)}>←</button>
+            <span className="label">{catLabel(expandedParent)} — pick a subcategory, or keep it general</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+            <button className="btn" style={{ justifyContent: "center" }}
+              onClick={() => categorize.mutate({ transactionId: card.transaction.transactionId, categoryId: expandedParent, merchant: card.transaction.merchant })}>
+              Keep in {catLabel(expandedParent)}
+            </button>
+            {childrenOf(expandedParent).map((sub) => (
+              <button key={sub.category_id} className="btn-ghost" style={{ justifyContent: "center" }}
+                onClick={() => categorize.mutate({ transactionId: card.transaction.transactionId, categoryId: sub.category_id, merchant: card.transaction.merchant })}>
+                {sub.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+          {options.map((c, i) => {
+            const subs = childrenOf(c.category_id);
+            return (
+              <button key={c.category_id}
+                className={i === 0 && card.suggestedCategoryId === c.category_id ? "btn" : "btn-ghost"}
+                style={{ justifyContent: "center" }}
+                title={subs.length > 0 ? `${c.name} has ${subs.length} subcategor${subs.length === 1 ? "y" : "ies"} — click to choose` : undefined}
+                onClick={() =>
+                  subs.length > 0
+                    ? setExpandedParent(c.category_id)
+                    : categorize.mutate({ transactionId: card.transaction.transactionId, categoryId: c.category_id, merchant: card.transaction.merchant })
+                }>
+                {i + 1}. {c.name}{subs.length > 0 && <span className="muted" style={{ marginLeft: 5, fontSize: 10 }}>▾</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ display: "grid", marginTop: 8 }}>
+        <button className="btn-ghost" style={{ justifyContent: "center" }}
           onClick={() => categorize.mutate({ transactionId: card.transaction.transactionId, categoryId: null, merchant: null })}>
           Skip — mark as transfer / ignore
         </button>

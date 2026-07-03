@@ -72,7 +72,7 @@ beforeAll(() => {
   getDb()
     .prepare(
       `INSERT INTO debts (debt_id, person_id, name, kind, current_balance, apr, min_payment, status, created_at)
-       VALUES ('d-cc', 'nick', 'Card', 'credit_card', 3000, 21, 60, 'active', ?)`,
+       VALUES ('d-loan', 'nick', 'Loan', 'personal', 3000, 21, 60, 'active', ?)`,
     )
     .run(NOW);
 });
@@ -126,7 +126,7 @@ describe("bills calendar", () => {
 });
 
 describe("debt payoff over repo data", () => {
-  it("produces a plan from stored debts", () => {
+  it("produces a plan from stored long-term debts", () => {
     const plan = getPayoffPlan(ctx(), "avalanche", 440);
     // budget = min 60 + extra 440 = 500; month 1: 3000 + 52.50 interest − 500 = 2552.50
     expect(plan.perDebt[0]?.balances[0]).toBe(2552.5);

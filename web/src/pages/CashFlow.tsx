@@ -31,7 +31,7 @@ export function CashFlow() {
 
   const summary = useApi<CashflowSummary>(["cashflow.summary", lens, month], `/api/cashflow/summary${q}`);
   const sankey = useApi<SankeyGraph>(["cashflow.sankey", lens, month], `/api/cashflow/sankey${q}`);
-  const flux = useApi<FluxMatrix>(["cashflow.flux", lens], `/api/cashflow/flux${q}&months=12`);
+  const flux = useApi<FluxMatrix>(["cashflow.flux", lens, month], `/api/cashflow/flux${q}`);
   const budget = useApi<BudgetView>(["budget.view", lens, month], `/api/budget${q}`);
   const drilldown = useApi<CategoryDrilldown>(
     ["cashflow.category", drill?.categoryId ?? "", lens, month],
@@ -75,15 +75,22 @@ export function CashFlow() {
     if (!f) return {};
     const cats = f.categories.filter((c) => c.kind === "expense");
     const cellMap = new Map(f.cells.map((c) => [`${c.month}|${c.categoryId}`, c.value]));
-    const data: [number, number, number][] = [];
+    const curIdx = f.months.indexOf(month);
+    type Cell = { value: [number, number, number]; itemStyle?: object };
+    const data: Cell[] = [];
     let maxAbs = 1;
     cats.forEach((c, y) => {
       f.months.forEach((m, x) => {
+        if (m > month) return; // future months stay blank — no spend yet
         const actual = cellMap.get(`${m}|${c.categoryId}`) ?? 0;
         const b = budgetByCat.get(c.categoryId)?.budget ?? 0;
         const v = matrixMode === "actuals" ? actual : actual - b;
         maxAbs = Math.max(maxAbs, Math.abs(v));
-        data.push([x, y, Math.round(v)]);
+        data.push({
+          value: [x, y, Math.round(v)],
+          // the current month's column wears an accent frame — "you are here"
+          ...(x === curIdx ? { itemStyle: { borderColor: cssVar("--accent"), borderWidth: 1.5 } } : {}),
+        });
       });
     });
     const base = chartBase(cssVar("--ink"), cssVar("--ink-muted"), cssVar("--line"));
@@ -99,8 +106,24 @@ export function CashFlow() {
         },
       },
       grid: { left: 8, right: 60, top: 8, bottom: 28, containLabel: true },
-      xAxis: { type: "category", data: f.months.map(monthShort), ...base.xAxis, splitArea: { show: false } },
-      yAxis: { type: "category", data: cats.map((c) => c.name), axisLabel: { color: cssVar("--ink-muted"), fontSize: 11 }, splitLine: { show: false } },
+      xAxis: {
+        type: "category", data: f.months.map(monthShort), ...base.xAxis,
+        // separator columns: a visible gridline between every month
+        splitLine: { show: true, lineStyle: { color: cssVar("--line") } },
+        splitArea: { show: false },
+        axisLabel: {
+          color: cssVar("--ink-muted"), fontSize: 11,
+          formatter: (val: string, idx: number) => (idx === curIdx ? `{cur|${val}}` : val),
+          rich: { cur: { color: cssVar("--accent"), fontWeight: 700 as const, fontSize: 11 } },
+        },
+      },
+      yAxis: {
+        type: "category", data: cats.map((c) => c.name),
+        axisLabel: { color: cssVar("--ink-muted"), fontSize: 11 },
+        // separator rows: keep each expense type visually on its own lane
+        splitLine: { show: true, lineStyle: { color: cssVar("--line") } },
+        splitArea: { show: true, areaStyle: { color: ["transparent", "color-mix(in srgb, var(--surface-2) 45%, transparent)"] } },
+      },
       visualMap: {
         min: matrixMode === "actuals" ? 0 : -maxAbs, max: maxAbs, calculable: false,
         orient: "vertical", right: 0, top: "center", itemHeight: 120,
@@ -113,12 +136,13 @@ export function CashFlow() {
       },
       series: [{
         type: "heatmap", data,
-        label: { show: true, fontSize: 9.5, color: cssVar("--ink"), formatter: (p: { value: [number, number, number] }) => (Math.abs(p.value[2]) >= 1 ? `${p.value[2] >= 0 ? "" : "−"}${Math.round(Math.abs(p.value[2]) / (matrixMode === "actuals" ? 1 : 1)).toLocaleString()}` : "") },
-        itemStyle: { borderColor: cssVar("--surface"), borderWidth: 2, borderRadius: 4 },
+        label: { show: true, fontSize: 9.5, color: cssVar("--ink"), formatter: (p: { value: [number, number, number] }) => (Math.abs(p.value[2]) >= 1 ? `${p.value[2] >= 0 ? "" : "−"}${Math.round(Math.abs(p.value[2])).toLocaleString()}` : "") },
+        // wide borders in the surface color read as padding between cells
+        itemStyle: { borderColor: cssVar("--surface"), borderWidth: 5, borderRadius: 5 },
         emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,.4)" } },
       }],
     };
-  }, [flux.data, budgetByCat, matrixMode, theme]);
+  }, [flux.data, budgetByCat, matrixMode, theme, month]);
 
   const kpis = s ? [
     { label: "Money in", v: fmt(s.income), color: "var(--accent)" },
@@ -190,14 +214,14 @@ export function CashFlow() {
       <Card style={{ padding: "22px 24px" }}>
         <div className="spread" style={{ alignItems: "flex-start", marginBottom: 12 }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Flux matrix<Tip text="Twelve months × category. In 'vs Budget' mode each cell is actual spend minus your current budget line — green under, amber over. 'Actuals' shows raw spend. Click any cell to drill into its transactions and variance drivers." /></div>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Flux matrix<Tip text="The window centers on the viewed month: 6 months back, the framed current month, and 5 empty columns ahead. In 'vs Budget' mode each cell is actual spend minus your current budget line — green under, amber over. 'Actuals' shows raw spend. Click any cell to drill into its transactions and variance drivers." /></div>
             <div className="muted" style={{ fontSize: 12 }}>
-              12 months × category · {matrixMode === "variance" ? <>variance vs current budget — <span style={{ color: "var(--accent)" }}>green under</span>, <span style={{ color: "var(--warn)" }}>amber over</span></> : "actual spend"} · click a cell for detail
+              6 months back · <span style={{ color: "var(--accent)", fontWeight: 600 }}>{monthLabel(month)} framed</span> · 5 ahead — {matrixMode === "variance" ? <>variance vs current budget: <span style={{ color: "var(--accent)" }}>green under</span>, <span style={{ color: "var(--warn)" }}>amber over</span></> : "actual spend"} · click a cell for detail
             </div>
           </div>
           <Seg subtle items={[{ key: "actuals" as const, label: "Actuals" }, { key: "variance" as const, label: "vs Budget" }]} value={matrixMode} onChange={setMatrixMode} />
         </div>
-        <Chart option={matrixOption} height={Math.max(300, 34 * (flux.data?.categories.filter((c) => c.kind === "expense").length ?? 8))}
+        <Chart option={matrixOption} height={Math.max(320, 42 * (flux.data?.categories.filter((c) => c.kind === "expense").length ?? 8))}
           onClick={(p) => {
             if (p.componentSubType !== "heatmap") return;
             const v = p.value as [number, number, number];

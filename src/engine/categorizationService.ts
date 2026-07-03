@@ -27,6 +27,9 @@ import {
   deleteRule as repoDeleteRule,
   type CategoryRuleRow,
 } from "../db/repositories/budgeting.js";
+import { listAccounts } from "../db/repository.js";
+import { inLens } from "../analytics/cashflow.js";
+import type { EngineContext } from "./context.js";
 
 function loadRules(): CategoryRule[] {
   return listRules().map(toCategoryRule);
@@ -119,7 +122,9 @@ export function getInbox(limit = 25): { count: number; cards: InboxCard[] } {
         transactionId: tx.transactionId,
         date: tx.date,
         merchant: tx.merchantName ?? tx.payee,
-        amount: Math.abs(signedFlow(tx)),
+        // signed flow: positive = money in — the UI needs the direction to
+        // offer income categories for deposits
+        amount: signedFlow(tx),
         plaidPrimary: tx.plaidPrimary,
       },
       suggestedCategoryId: suggestCategory(tx, history),
@@ -129,6 +134,105 @@ export function getInbox(limit = 25): { count: number; cards: InboxCard[] } {
 
 export function categorizeManually(transactionId: string, categoryId: string | null): boolean {
   return setTransactionCategory(transactionId, categoryId, "manual");
+}
+
+// ---- the Transactions page: every row for a month, browsable & editable ----
+
+export interface TransactionListItem {
+  transactionId: string;
+  date: string;
+  merchant: string | null;
+  /** Signed flow: positive = money in. */
+  amount: number;
+  pending: boolean;
+  accountId: string;
+  accountName: string;
+  accountMask: string | null;
+  personId: string | null;
+  categoryId: string | null;
+  categorizationSource: "plaid" | "rule" | "manual";
+  plaidPrimary: string | null;
+  isTransfer: boolean;
+  reimbursedBy: "work" | "buildings" | null;
+  goalId: string | null;
+}
+
+export interface TransactionsListView {
+  month: string;
+  count: number;
+  totalIn: number;
+  totalOut: number;
+  transactions: TransactionListItem[];
+}
+
+export interface TransactionsListOpts {
+  /** Substring match against merchant/payee, case-insensitive. */
+  search?: string;
+  /** Category filter; "uncategorized" and "transfer" are virtual buckets. */
+  categoryId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** Every transaction in the viewed month (transfers and flagged rows
+ *  included — this is the raw ledger, not the budget's filtered view). */
+export function listTransactions(ctx: EngineContext, opts: TransactionsListOpts = {}): TransactionsListView {
+  const accountsById = new Map(listAccounts().map((a) => [a.account_id, a]));
+  const needle = opts.search?.trim().toLowerCase();
+
+  let rows = flowsForRange(ctx.range).filter((t) => inLens(t.personId, ctx.lens));
+  if (needle) {
+    rows = rows.filter((t) =>
+      (t.merchantName ?? t.payee ?? "").toLowerCase().includes(needle),
+    );
+  }
+  if (opts.categoryId === "uncategorized") {
+    rows = rows.filter((t) => !t.categoryId && !t.isTransfer && !t.reimbursedBy && !t.goalId);
+  } else if (opts.categoryId === "transfer") {
+    rows = rows.filter((t) => t.isTransfer);
+  } else if (opts.categoryId) {
+    rows = rows.filter((t) => t.categoryId === opts.categoryId);
+  }
+
+  let totalIn = 0;
+  let totalOut = 0;
+  for (const t of rows) {
+    if (t.isTransfer) continue;
+    const flow = signedFlow(t);
+    if (flow > 0) totalIn += flow;
+    else totalOut -= flow;
+  }
+
+  const sorted = rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  const offset = opts.offset ?? 0;
+  const page = sorted.slice(offset, offset + (opts.limit ?? 100));
+
+  return {
+    month: ctx.month,
+    count: rows.length,
+    totalIn: Math.round(totalIn * 100) / 100,
+    totalOut: Math.round(totalOut * 100) / 100,
+    transactions: page.map((t) => {
+      const acc = accountsById.get(t.accountId);
+      return {
+        transactionId: t.transactionId,
+        date: t.date,
+        merchant: t.merchantName ?? t.payee,
+        amount: signedFlow(t),
+        pending: t.pending,
+        accountId: t.accountId,
+        accountName: acc?.name ?? acc?.official_name ?? t.accountId,
+        accountMask: acc?.mask ?? null,
+        personId: t.personId,
+        categoryId: t.categoryId,
+        categorizationSource: t.categorizationSource,
+        plaidPrimary: t.plaidPrimary,
+        isTransfer: t.isTransfer,
+        reimbursedBy: t.reimbursedBy,
+        goalId: t.goalId ?? null,
+      };
+    }),
+  };
 }
 
 /**

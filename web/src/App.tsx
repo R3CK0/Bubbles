@@ -3,6 +3,7 @@ import { usePersons } from "./api/hooks";
 import { Shell } from "./shell/Shell";
 import { Overview } from "./pages/Overview";
 import { CashFlow } from "./pages/CashFlow";
+import { Transactions } from "./pages/Transactions";
 import { AccountFlows } from "./pages/AccountFlows";
 import { Budget } from "./pages/Budget";
 import { Bills } from "./pages/Bills";
@@ -42,6 +43,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Overview /> },
       { path: "cashflow", element: <CashFlow /> },
+      { path: "transactions", element: <Transactions /> },
       { path: "flows", element: <AccountFlows /> },
       { path: "budget", element: <Budget /> },
       { path: "bills", element: <Bills /> },

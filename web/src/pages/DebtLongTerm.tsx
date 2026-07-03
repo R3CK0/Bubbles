@@ -134,7 +134,7 @@ export function DebtLongTermPage() {
       <Card>
         <div className="spread" style={{ marginBottom: 6, flexWrap: "wrap", gap: 12 }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 600 }}>Payoff mountain — all debts<Tip text="Projected balances stacked per debt (short-term included), melting to zero. Avalanche pays highest-APR first (cheapest); snowball pays smallest balance first (quickest wins). The extra slider adds monthly money on top of all minimums." /></div>
+            <div style={{ fontSize: 15, fontWeight: 600 }}>Payoff mountain — long-term debts<Tip text="Projected balances stacked per installment loan, melting to zero. Revolving credit (cards, lines of credit) lives on the short-term screen and is excluded. Avalanche pays highest-APR first (cheapest); snowball pays smallest balance first (quickest wins). The extra slider adds monthly money on top of all minimums." /></div>
             {cmp && (
               <div className="muted" style={{ fontSize: 12, marginTop: 3 }}>
                 Avalanche is debt-free <b style={{ color: "var(--accent)" }}>{cmp.monthsSaved} month{cmp.monthsSaved === 1 ? "" : "s"} sooner</b> and saves <b style={{ color: "var(--accent)" }}>{fmt(cmp.interestSaved)}</b> in interest vs. snowball

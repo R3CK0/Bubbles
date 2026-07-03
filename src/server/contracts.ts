@@ -47,6 +47,15 @@ export const budgetUpdateSchema = z
   .strict();
 export type BudgetUpdateBody = z.infer<typeof budgetUpdateSchema>;
 
+/** Clear the whole budget from a month onward (new empty version). */
+export const budgetResetSchema = z
+  .object({
+    effectiveFrom: z.string().regex(/^\d{4}-\d{2}$/),
+    name: z.string().min(1).optional(),
+  })
+  .strict();
+export type BudgetResetBody = z.infer<typeof budgetResetSchema>;
+
 // ---- Categories & rules ----
 export type CategoriesResponse = { categories: CategoryRow[] };
 

@@ -5,19 +5,44 @@ import { api } from "../api/client";
 import { useUi, COMBINED, shiftMonth } from "../stores/ui";
 import { monthLabel, monthShort } from "../lib/format";
 
-const NAV: { to: string; name: string; icon: string }[] = [
-  { to: "/", name: "Overview", icon: "M3 12l9-9 9 9M5 10v10h5v-6h4v6h5V10" },
-  { to: "/cashflow", name: "Cash Flow", icon: "M3 6h13M3 12h9M3 18h13M19 4v6M16 7l3-3 3 3M19 20v-6M16 17l3 3 3-3" },
-  { to: "/flows", name: "Account Flows", icon: "M17 8H3M13 4l4 4-4 4M7 16h14M11 12l-4 4 4 4" },
-  { to: "/budget", name: "Budget", icon: "M4 5h16v4H4zM4 12h10v4H4zM4 19h7" },
-  { to: "/bills", name: "Bills", icon: "M8 2v4M16 2v4M3 8h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" },
-  { to: "/goals", name: "Goals", icon: "M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20zM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zM12 13a1 1 0 1 1 0-2" },
-  { to: "/debt/short-term", name: "Short-Term Debt", icon: "M2 8h20v11a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1zM2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v2M2 12h20" },
-  { to: "/debt/long-term", name: "Long-Term Debt", icon: "M3 18l5-6 4 3 6-8 3 4M3 22h18" },
-  { to: "/investments", name: "Investments", icon: "M3 20V10M9 20V4M15 20v-9M21 20V7" },
-  { to: "/networth", name: "Net Worth", icon: "M3 12h18M6 12V6a6 6 0 0 1 12 0v6M6 12v5a6 6 0 0 0 12 0v-5" },
-  { to: "/taxes", name: "Taxes", icon: "M9 14l6-6M9.5 8.5h.01M14.5 13.5h.01M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" },
-  { to: "/review", name: "Review", icon: "M4 4h16v12H4zM8 20h8M12 16v4" },
+interface NavItem { to: string; name: string; icon: string }
+interface NavGroup { label: string | null; items: NavItem[] }
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: null,
+    items: [{ to: "/", name: "Overview", icon: "M3 12l9-9 9 9M5 10v10h5v-6h4v6h5V10" }],
+  },
+  {
+    label: "Spending",
+    items: [
+      { to: "/cashflow", name: "Cash Flow", icon: "M3 6h13M3 12h9M3 18h13M19 4v6M16 7l3-3 3 3M19 20v-6M16 17l3 3 3-3" },
+      { to: "/transactions", name: "Transactions", icon: "M4 6h16M4 12h16M4 18h10M18 16l3 3-3 3" },
+      { to: "/budget", name: "Budget", icon: "M4 5h16v4H4zM4 12h10v4H4zM4 19h7" },
+      { to: "/bills", name: "Bills", icon: "M8 2v4M16 2v4M3 8h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" },
+      { to: "/flows", name: "Account Flows", icon: "M17 8H3M13 4l4 4-4 4M7 16h14M11 12l-4 4 4 4" },
+    ],
+  },
+  {
+    label: "Debt",
+    items: [
+      { to: "/debt/short-term", name: "Short-Term", icon: "M2 8h20v11a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1zM2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v2M2 12h20" },
+      { to: "/debt/long-term", name: "Long-Term", icon: "M3 18l5-6 4 3 6-8 3 4M3 22h18" },
+    ],
+  },
+  {
+    label: "Wealth",
+    items: [
+      { to: "/goals", name: "Goals", icon: "M12 22a10 10 0 1 1 0-20 10 10 0 0 1 0 20zM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zM12 13a1 1 0 1 1 0-2" },
+      { to: "/investments", name: "Investments", icon: "M3 20V10M9 20V4M15 20v-9M21 20V7" },
+      { to: "/networth", name: "Net Worth", icon: "M3 12h18M6 12V6a6 6 0 0 1 12 0v6M6 12v5a6 6 0 0 0 12 0v-5" },
+      { to: "/taxes", name: "Taxes", icon: "M9 14l6-6M9.5 8.5h.01M14.5 13.5h.01M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" },
+    ],
+  },
+  {
+    label: "Insights",
+    items: [{ to: "/review", name: "Review", icon: "M4 4h16v12H4zM8 20h8M12 16v4" }],
+  },
 ];
 
 function NavRow({ to, name, icon, open }: { to: string; name: string; icon: string; open: boolean }) {
@@ -94,7 +119,16 @@ export function Shell() {
           {ui.sidebarOpen && <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-.01em" }}>Bubbles</div>}
         </div>
         <nav className="col" style={{ gap: 2 }}>
-          {NAV.map((n) => <NavRow key={n.to} {...n} open={ui.sidebarOpen} />)}
+          {NAV_GROUPS.map((g, gi) => (
+            <div key={g.label ?? gi} className="col" style={{ gap: 2 }}>
+              {gi > 0 && (
+                ui.sidebarOpen && g.label
+                  ? <div className="label" style={{ padding: "14px 12px 5px", fontSize: 10.5 }}>{g.label}</div>
+                  : <div style={{ margin: "8px 10px", borderTop: "1px solid var(--line)" }} />
+              )}
+              {g.items.map((n) => <NavRow key={n.to} {...n} open={ui.sidebarOpen} />)}
+            </div>
+          ))}
         </nav>
         <div style={{ flex: 1 }} />
         <NavRow to="/help" name="Help" icon="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.6-3 4M12 17h.01" open={ui.sidebarOpen} />

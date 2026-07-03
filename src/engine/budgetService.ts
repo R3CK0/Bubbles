@@ -9,7 +9,9 @@ import {
   daysInMonth,
   estimateTax,
   monthOf,
+  relevantFlows,
   roundCents,
+  signedFlow,
   type BudgetLineInput,
   type BudgetVsActualRow,
   type CategoryNode,
@@ -145,10 +147,20 @@ export function getBudgetView(ctx: EngineContext): BudgetView {
   }));
   const lines = withDerivedIncomeLines(stored, categories, ctx.month);
 
-  const summary = computeCashflow(flowsForRange(ctx.range), categories, ctx.lens, ctx.range);
+  const flows = flowsForRange(ctx.range);
+  const summary = computeCashflow(flows, categories, ctx.lens, ctx.range);
   const actuals = new Map<string, number>();
   for (const row of summary.byCategory) {
     if (row.categoryId !== null) actuals.set(row.categoryId, row.amount);
+  }
+  // byCategory covers spending only — fold categorized income in as well so
+  // the budget's income rows show actuals, not a permanent zero
+  const catIndex = new Map(categories.map((c) => [c.categoryId, c]));
+  for (const t of relevantFlows(flows, ctx.lens, ctx.range)) {
+    const cat = t.categoryId ? catIndex.get(t.categoryId) : undefined;
+    if (cat?.kind === "income") {
+      actuals.set(cat.categoryId, roundCents((actuals.get(cat.categoryId) ?? 0) + signedFlow(t)));
+    }
   }
 
   const dayFraction = dayFractionFor(ctx);
@@ -204,6 +216,22 @@ export function updateBudgetLines(
 
 export function getBudgetVersions(): BudgetVersionRow[] {
   return listBudgetVersions();
+}
+
+/**
+ * Clear the budget from `effectiveFrom` onward: writes a new version with no
+ * lines at all, so every category starts back at zero and the user can build
+ * a fresh budget. Past months keep the versions that governed them; income
+ * lines keep deriving live from the household income settings.
+ */
+export function resetBudget(effectiveFrom: string, name?: string): BudgetVersionRow {
+  return createBudgetVersion(
+    name ?? `Fresh budget from ${effectiveFrom}`,
+    `${effectiveFrom}-01`,
+    "cleared",
+    [],
+    new Date().toISOString(),
+  );
 }
 
 export interface CategoryVarianceNarrative {

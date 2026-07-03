@@ -135,10 +135,12 @@ describe("cashflow service", () => {
     expect(g.links.find((l) => l.source === "Essentials" && l.target === "Groceries")?.value).toBe(400);
   });
 
-  it("flux matrix has the June cells", () => {
+  it("flux matrix centers the window on the viewed month", () => {
     const m = getFluxMatrix(ctx(), 3);
-    expect(m.months).toEqual(["2026-04", "2026-05", "2026-06"]);
+    // 1 back, the viewed month, 1 ahead — future months carry no cells
+    expect(m.months).toEqual(["2026-05", "2026-06", "2026-07"]);
     expect(m.cells.find((c) => c.month === "2026-06" && c.categoryId === "essentials")?.value).toBe(485);
+    expect(m.cells.some((c) => c.month === "2026-07")).toBe(false);
   });
 });
 

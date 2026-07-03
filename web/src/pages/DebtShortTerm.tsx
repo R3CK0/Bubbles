@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAction, useApi, useCtx } from "../api/hooks";
 import { api } from "../api/client";
-import type { ShortTermDebtItem, ShortTermDebtView } from "../api/types";
+import type { ShortTermDebtItem, ShortTermDebtView, ShortTermHistory } from "../api/types";
 import { Card, EmptyState, Field, Modal } from "../components/ui";
 import { Tip } from "../components/Tip";
-import { dayLabel, fmt, fmtC, monthLabel } from "../lib/format";
+import { Chart, chartBase, EChartsOption } from "../components/Chart";
+import { cssVar, dayLabel, fmt, fmtC, monthLabel, monthShort } from "../lib/format";
+import { useUi } from "../stores/ui";
 import { DebtForm, toDraft, useDebtActions, type DebtDraft } from "./Debt";
 
 interface StatementDraft {
@@ -17,11 +19,36 @@ interface StatementDraft {
 
 export function DebtShortTermPage() {
   const { lens, month, q } = useCtx();
+  const theme = useUi((s) => s.theme);
   const [editing, setEditing] = useState<DebtDraft | null>(null);
   const [statement, setStatement] = useState<StatementDraft | null>(null);
 
   const view = useApi<ShortTermDebtView>(["debts.short", lens, month], `/api/debts/short-term${q}`);
+  const history = useApi<ShortTermHistory>(["debts.short.history", lens, month], `/api/debts/short-term/history${q}&months=12`);
   const { save, payOff } = useDebtActions();
+
+  const historyOption = useMemo<EChartsOption>(() => {
+    const h = history.data;
+    if (!h) return {};
+    const base = chartBase(cssVar("--ink"), cssVar("--ink-muted"), cssVar("--line"));
+    const series = [
+      { name: "Spend on cards", color: cssVar("--warn"), data: h.months.map((m) => Math.round(m.spend)) },
+      { name: "Payments made", color: cssVar("--accent"), data: h.months.map((m) => Math.round(m.payments)) },
+      { name: "Interest charged", color: cssVar("--danger"), data: h.months.map((m) => Math.round(m.interest)) },
+    ];
+    return {
+      ...base,
+      legend: { textStyle: { color: cssVar("--ink-muted"), fontSize: 11 }, top: 0 },
+      grid: { left: 8, right: 12, top: 32, bottom: 4, containLabel: true },
+      xAxis: { type: "category", data: h.months.map((m) => monthShort(m.month) + (m.month.endsWith("-01") ? ` '${m.month.slice(2, 4)}` : "")), ...base.xAxis },
+      yAxis: { type: "value", ...base.yAxis },
+      series: series.map((s) => ({
+        name: s.name, type: "bar" as const, data: s.data,
+        itemStyle: { color: s.color, borderRadius: [3, 3, 0, 0] },
+        barGap: "15%", barCategoryGap: "35%",
+      })),
+    };
+  }, [history.data, theme]);
   const saveStatement = useAction(
     (s: StatementDraft) => api(`/api/debts/${s.debtId}/statement`, {
       method: "PUT",
@@ -122,6 +149,15 @@ export function DebtShortTermPage() {
         {v && v.debts.some((d) => d.statementSource === "computed") && (
           <div className="muted" style={{ padding: "8px 16px 10px", fontSize: 11 }}>* computed from the start-of-month balance — open the pay-by dialog to enter the real statement balance.</div>
         )}
+      </Card>
+
+      <Card style={{ padding: "22px 24px" }}>
+        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
+          Monthly picture — spend vs payments vs interest
+          <Tip text="Per month, for all cards and lines of credit together: new purchases charged (amber), payments that landed on the accounts (green), and interest actually charged by the bank (red). A healthy month has payments ≥ spend and no red." />
+        </div>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>last 12 months · only debts linked to a synced account contribute</div>
+        <Chart option={historyOption} height={260} />
       </Card>
 
       {editing && (

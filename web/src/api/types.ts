@@ -93,6 +93,21 @@ export interface InboxCard {
   suggestedCategoryId: string | null;
 }
 
+// ---- transactions page ----
+export interface TransactionListItem {
+  transactionId: string; date: string; merchant: string | null;
+  /** Signed flow: positive = money in. */
+  amount: number; pending: boolean;
+  accountId: string; accountName: string; accountMask: string | null; personId: string | null;
+  categoryId: string | null; categorizationSource: "plaid" | "rule" | "manual";
+  plaidPrimary: string | null; isTransfer: boolean;
+  reimbursedBy: "work" | "buildings" | null; goalId: string | null;
+}
+export interface TransactionsListView {
+  month: string; count: number; totalIn: number; totalOut: number;
+  transactions: TransactionListItem[];
+}
+
 // ---- AI expense review ----
 export interface AiStatus { enabled: boolean; model: string }
 export interface AiSuggestion {
@@ -153,6 +168,9 @@ export interface ShortTermDebtView {
   month: string; debts: ShortTermDebtItem[];
   totalBalance: number; totalPaidThisMonth: number; totalProjectedInterest: number; missingDueDates: number;
 }
+
+export interface ShortTermMonth { month: string; spend: number; payments: number; interest: number }
+export interface ShortTermHistory { months: ShortTermMonth[] }
 
 export interface LongTermDebtItem extends Debt {
   effectiveMinPayment: number;

@@ -11,6 +11,7 @@ import {
   getLongTermDebtView,
   getPayoffPlan,
   getShortTermDebtView,
+  getShortTermHistory,
   getStrategyComparison,
   setDebtStatement,
   updateDebt,
@@ -26,6 +27,14 @@ debtsRouter.get("/api/debts", (req, res) => {
 
 debtsRouter.get("/api/debts/short-term", (req, res) => {
   res.json(getShortTermDebtView(buildContext(req.query)));
+});
+
+const historyQuery = z.object({ months: z.coerce.number().int().min(1).max(36).default(12) });
+
+/** Monthly spend / payments / interest for the short-term bar chart. */
+debtsRouter.get("/api/debts/short-term/history", (req, res) => {
+  const { months } = historyQuery.parse({ months: req.query.months });
+  res.json(getShortTermHistory(buildContext(req.query), months));
 });
 
 debtsRouter.get("/api/debts/long-term", (req, res) => {

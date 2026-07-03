@@ -9,16 +9,19 @@ import {
   getBudgetVersions,
   getBudgetView,
   getVarianceNarratives,
+  resetBudget,
   updateBudgetLines,
 } from "../../engine/budgetService.js";
 import {
   categorizeManually,
   deleteRule,
   getInbox,
+  listTransactions,
   saveRule,
 } from "../../engine/categorizationService.js";
 import { listCategories, listRules, setTransactionFlags, upsertCategory } from "../../db/repositories/budgeting.js";
 import {
+  budgetResetSchema,
   budgetUpdateSchema,
   categorizeSchema,
   categorySchema,
@@ -45,6 +48,12 @@ budgetRouter.put("/api/budget/lines", (req, res) => {
     body.name,
   );
   res.json({ version });
+});
+
+/** Clear the budget from a month onward — a fresh, empty version. */
+budgetRouter.post("/api/budget/reset", (req, res) => {
+  const body = budgetResetSchema.parse(req.body);
+  res.json({ version: resetBudget(body.effectiveFrom, body.name) });
 });
 
 budgetRouter.get("/api/budget/versions", (_req, res) => {
@@ -93,6 +102,32 @@ const inboxQuery = z.object({ limit: z.coerce.number().int().min(1).max(100).def
 budgetRouter.get("/api/categories/inbox", (req, res) => {
   const { limit } = inboxQuery.parse({ limit: req.query.limit });
   res.json(getInbox(limit));
+});
+
+const txListQuery = z.object({
+  search: z.string().optional(),
+  category: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+/** The Transactions page: every row for the viewed month, DB-only (the
+ *  vault-guarded /api/transactions is the Plaid tier's raw query). */
+budgetRouter.get("/api/transactions/all", (req, res) => {
+  const q = txListQuery.parse({
+    search: req.query.search,
+    category: req.query.category,
+    limit: req.query.limit,
+    offset: req.query.offset,
+  });
+  res.json(
+    listTransactions(buildContext(req.query), {
+      search: q.search,
+      categoryId: q.category,
+      limit: q.limit,
+      offset: q.offset,
+    }),
+  );
 });
 
 budgetRouter.post("/api/transactions/:transactionId/categorize", (req, res) => {
