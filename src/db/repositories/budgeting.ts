@@ -260,7 +260,7 @@ const FLOW_SELECT = `
   SELECT t.transaction_id, t.account_id, a.person_id, t.amount, t.iso_currency_code,
          t.date, t.merchant_name, t.payee, t.category_id, t.categorization_source,
          t.personal_finance_category_primary, t.personal_finance_category_detailed,
-         t.is_transfer, t.reimbursed_by, t.goal_id, t.goal_line_id, t.pending
+         t.is_transfer, t.transfer_group_id, t.reimbursed_by, t.goal_id, t.goal_line_id, t.pending
   FROM transactions t
   JOIN accounts a ON a.account_id = t.account_id
   WHERE t.removed = 0 AND a.tracked = 1 AND a.is_closed = 0`;
@@ -279,6 +279,7 @@ interface FlowRow {
   personal_finance_category_primary: string | null;
   personal_finance_category_detailed: string | null;
   is_transfer: number;
+  transfer_group_id: string | null;
   reimbursed_by: "work" | "buildings" | null;
   goal_id: string | null;
   goal_line_id: string | null;
@@ -300,6 +301,7 @@ function toFlowTx(row: FlowRow): FlowTx {
     plaidPrimary: row.personal_finance_category_primary,
     plaidDetailed: row.personal_finance_category_detailed,
     isTransfer: row.is_transfer === 1,
+    transferGroupId: row.transfer_group_id,
     reimbursedBy: row.reimbursed_by,
     goalId: row.goal_id,
     goalLineId: row.goal_line_id,
@@ -461,4 +463,52 @@ export function markTransferPair(txIdA: string, txIdB: string): void {
     stmt.run(groupId, txIdA);
     stmt.run(groupId, txIdB);
   })();
+}
+
+/**
+ * User-marked single transfer leg: excluded from budget flows right away, but
+ * pending (no group) until the sweep finds its counterpart. Clears any
+ * category — transfers carry none — and stamps the source manual so rules
+ * never re-categorize it.
+ */
+export function setPendingTransfer(transactionId: string): boolean {
+  return (
+    getDb()
+      .prepare(
+        `UPDATE transactions
+         SET is_transfer = 1, transfer_group_id = NULL, category_id = NULL, categorization_source = 'manual'
+         WHERE transaction_id = ?`,
+      )
+      .run(transactionId).changes > 0
+  );
+}
+
+/** Undo a transfer mark. A validated pair unmarks BOTH legs — a half-pair
+ *  would silently distort both accounts' flows. */
+export function clearTransferMark(transactionId: string): number {
+  const db = getDb();
+  const row = db
+    .prepare(`SELECT transfer_group_id FROM transactions WHERE transaction_id = ?`)
+    .get(transactionId) as { transfer_group_id: string | null } | undefined;
+  if (!row) return 0;
+  if (row.transfer_group_id) {
+    return db
+      .prepare(
+        `UPDATE transactions SET is_transfer = 0, transfer_group_id = NULL WHERE transfer_group_id = ?`,
+      )
+      .run(row.transfer_group_id).changes;
+  }
+  return db
+    .prepare(
+      `UPDATE transactions SET is_transfer = 0, transfer_group_id = NULL WHERE transaction_id = ?`,
+    )
+    .run(transactionId).changes;
+}
+
+/** User-marked transfer legs still waiting for a counterpart. */
+export function listPendingTransferLegs(): FlowTx[] {
+  const rows = getDb()
+    .prepare(`${FLOW_SELECT} AND t.is_transfer = 1 AND t.transfer_group_id IS NULL ORDER BY t.date`)
+    .all() as FlowRow[];
+  return rows.map(toFlowTx);
 }

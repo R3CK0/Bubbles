@@ -184,11 +184,33 @@ export function Bills() {
           </div>
         </Card>
       )}
-      {(proposed.data?.registry.length ?? 0) > 0 && (
+      {(proposed.data?.registry.filter((r) => r.source === "manual").length ?? 0) > 0 && (
+        <Card style={{ borderLeft: "3px solid var(--warn)" }}>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Flagged from the inbox — awaiting confirmation<Tip text="Bills you flagged while categorizing. Each confirms itself into the registry the moment its next matching charge arrives (within about a week of the expected date). Confirm now to skip the wait, or remove if it was a mistake." /></div>
+          <div className="col" style={{ gap: 8 }}>
+            {proposed.data!.registry.filter((r) => r.source === "manual").map((r) => (
+              <div key={r.rp_id} className="panel spread" style={{ padding: "10px 14px" }}>
+                <div>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</span>
+                  <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>{fmtC(r.expected_amount)} · {r.frequency}</span>
+                  <span className="chip" style={{ marginLeft: 8, background: "color-mix(in srgb, var(--warn) 12%, transparent)", color: "var(--warn)" }}>
+                    ⏳ confirms ~{dayLabel(r.next_due_date)}
+                  </span>
+                </div>
+                <div className="row" style={{ gap: 8 }}>
+                  <button className="btn" style={{ padding: "6px 12px" }} onClick={() => accept.mutate(r.rp_id)}>Confirm now</button>
+                  <button className="btn-ghost" onClick={() => dismiss.mutate(r.rp_id)}>Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+      {(proposed.data?.registry.filter((r) => r.source === "detected").length ?? 0) > 0 && (
         <Card style={{ borderLeft: "3px solid var(--accent)" }}>
           <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Detected in your transactions — track these?<Tip text="The nightly job spots repeating charges (same merchant, similar amount, regular cadence). Accept to add one to the registry; dismiss to never see it again." /></div>
           <div className="col" style={{ gap: 8 }}>
-            {proposed.data!.registry.map((r) => (
+            {proposed.data!.registry.filter((r) => r.source === "detected").map((r) => (
               <div key={r.rp_id} className="panel spread" style={{ padding: "10px 14px" }}>
                 <div>
                   <span style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</span>

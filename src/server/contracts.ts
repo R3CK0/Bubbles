@@ -100,6 +100,16 @@ export const categorizeSchema = z
   .strict();
 export type CategorizeBody = z.infer<typeof categorizeSchema>;
 
+/** Inbox → flag a charge as a recurring expense; it confirms itself when the
+ *  next matching charge arrives. */
+export const recurringFlagSchema = z
+  .object({
+    frequency: z.enum(["weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual"]),
+    name: z.string().min(1).optional(),
+  })
+  .strict();
+export type RecurringFlagBody = z.infer<typeof recurringFlagSchema>;
+
 /** Budget-exclusion flags: expense-report reimbursements and goal spending. */
 export const transactionFlagsSchema = z
   .object({

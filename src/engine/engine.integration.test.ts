@@ -6,8 +6,18 @@ import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _setDbForTests, getDb } from "../db/db.js";
 import { runMigrations } from "../db/migrator.js";
-import { upsertCategory, upsertRule, createBudgetVersion, uncategorizedCount } from "../db/repositories/budgeting.js";
-import { categorizeRange, detectTransfers, getInbox, categorizeManually } from "./categorizationService.js";
+import { upsertCategory, upsertRule, createBudgetVersion, uncategorizedCount, getFlowTx } from "../db/repositories/budgeting.js";
+import { getRecurring } from "../db/repositories/recurring.js";
+import {
+  categorizeRange,
+  detectTransfers,
+  getInbox,
+  categorizeManually,
+  markTransferPending,
+  matchPendingTransfers,
+  unmarkTransfer,
+} from "./categorizationService.js";
+import { flagRecurringFromTransaction, matchNewTransactions } from "./recurringService.js";
 import { getCashflowSummary, getSankey, getFluxMatrix } from "./cashflowService.js";
 import { getBudgetView } from "./budgetService.js";
 import type { EngineContext } from "./context.js";
@@ -166,5 +176,67 @@ describe("budget service", () => {
     expect(groceries?.budget ?? 0).toBe(0); // nick's line drops out
     const resto = view.rows.find((r) => r.categoryId === "essentials-restaurants")!;
     expect(resto.budget).toBe(600); // joint line stays
+  });
+});
+
+describe("user-marked transfers", () => {
+  it("marks a leg pending, then validates when the counterpart lands", () => {
+    insertTx("t-mark-out", "acc-chq", 500, "2026-07-02", { merchant: "Transfer to savings" });
+    expect(markTransferPending("t-mark-out")).toEqual({ marked: true, matched: false });
+
+    // pending: excluded from flows already, but no group yet
+    const pendingLeg = getFlowTx("t-mark-out")!;
+    expect(pendingLeg.isTransfer).toBe(true);
+    expect(pendingLeg.transferGroupId).toBeNull();
+
+    // the counterpart syncs three days later → the sweep validates the pair
+    insertTx("t-mark-in", "acc-sav", -500, "2026-07-05");
+    expect(matchPendingTransfers("2026-07-05").matched).toBe(1);
+    const out = getFlowTx("t-mark-out")!;
+    const inn = getFlowTx("t-mark-in")!;
+    expect(out.transferGroupId).not.toBeNull();
+    expect(inn.transferGroupId).toBe(out.transferGroupId);
+
+    // unmarking a validated pair releases BOTH legs
+    expect(unmarkTransfer("t-mark-out")).toBe(2);
+    expect(getFlowTx("t-mark-in")!.isTransfer).toBe(false);
+  });
+
+  it("flags a stale mark once the window closes, without dropping the mark", () => {
+    insertTx("t-stale", "acc-chq", 77.77, "2026-07-01", { merchant: "E-transfer" });
+    markTransferPending("t-stale");
+    expect(matchPendingTransfers("2026-07-05").stale).toBe(0); // still inside the window
+    expect(matchPendingTransfers("2026-07-20").stale).toBe(1); // window closed, no counterpart
+    expect(getFlowTx("t-stale")!.isTransfer).toBe(true); // stays excluded until the user unmarks
+    expect(unmarkTransfer("t-stale")).toBe(1);
+  });
+});
+
+describe("recurring flagged from the inbox", () => {
+  it("creates a pending bill that confirms when the charge comes back", () => {
+    insertTx("t-gym-1", "acc-chq", 45.99, "2026-07-03", { merchant: "EconoFitness" });
+    const flag = flagRecurringFromTransaction("t-gym-1", { frequency: "monthly" }, "2026-07-03")!;
+    expect(flag.alreadyTracked).toBe(false);
+    expect(flag.recurring.status).toBe("proposed");
+    expect(flag.recurring.source).toBe("manual");
+    expect(flag.recurring.expected_amount).toBe(45.99);
+    expect(flag.recurring.next_due_date).toBe("2026-08-03");
+
+    // categorizing the flagged charge fills the pending bill's empty category
+    categorizeManually("t-gym-1", "essentials-restaurants");
+    expect(getRecurring(flag.recurring.rp_id)!.category_id).toBe("essentials-restaurants");
+
+    // next month's charge lands near the due date → matched AND confirmed
+    insertTx("t-gym-2", "acc-chq", 45.99, "2026-08-02", { merchant: "EconoFitness" });
+    const res = matchNewTransactions({ start: "2026-08-01", end: "2026-08-31" }, "2026-08-02T12:00:00.000Z");
+    expect(res.confirmed).toBe(1);
+    expect(getRecurring(flag.recurring.rp_id)!.status).toBe("active");
+  });
+
+  it("re-flagging the same merchant links to the existing bill instead of duplicating", () => {
+    insertTx("t-gym-3", "acc-chq", 45.99, "2026-09-03", { merchant: "EconoFitness" });
+    const again = flagRecurringFromTransaction("t-gym-3", { frequency: "monthly" }, "2026-09-03")!;
+    expect(again.alreadyTracked).toBe(true);
+    expect(again.recurring.name).toBe("EconoFitness");
   });
 });

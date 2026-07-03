@@ -55,6 +55,9 @@ export interface FlowTx {
   plaidPrimary: string | null;
   plaidDetailed: string | null;
   isTransfer: boolean;
+  /** Paired-transfer group id. A transfer without one is a user-marked leg
+   *  still waiting for its counterpart (pending). */
+  transferGroupId?: string | null;
   reimbursedBy: "work" | "buildings" | null;
   /** Spending tagged to a goal draws from the goal's envelope, not the budget. */
   goalId?: string | null;

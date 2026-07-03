@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useAction, useApi, useCtx } from "../api/hooks";
 import { api } from "../api/client";
-import type { AiApplyResult, AiReviewCard, AiStatus, BudgetView, Category, ExcludedSummary, GoalsView, InboxCard, Rule, VarianceNarrative, BudgetVersion } from "../api/types";
+import type { AiApplyResult, AiReviewCard, AiStatus, BudgetView, Category, ExcludedSummary, Frequency, GoalsView, InboxCard, RecurringFlagResult, Rule, TransferMarkResult, VarianceNarrative, BudgetVersion } from "../api/types";
 import { Card, EmptyState, Field, Modal, Seg } from "../components/ui";
 import { Tip } from "../components/Tip";
 import { fmt, fmtDelta, dayLabel, monthLabel } from "../lib/format";
@@ -380,8 +380,32 @@ function Inbox({ categories }: { categories: Category[] }) {
   // picking a category that has subcategories expands it first — the user can
   // still leave the transaction at the parent level
   const [expandedParent, setExpandedParent] = useState<string | null>(null);
-  useEffect(() => setExpandedParent(null), [card?.transaction.transactionId]);
+  // transfer / recurring flag state, reset per card
+  const [flowNotice, setFlowNotice] = useState<string | null>(null);
+  const [recOpen, setRecOpen] = useState(false);
+  const [recFreq, setRecFreq] = useState<Frequency>("monthly");
+  useEffect(() => {
+    setExpandedParent(null);
+    setRecOpen(false);
+    setRecFreq("monthly");
+  }, [card?.transaction.transactionId]);
   const childrenOf = (id: string) => categories.filter((c) => c.parent_id === id && !c.archived);
+
+  // preemptive transfer mark: the card leaves the inbox now; the system pairs
+  // it with the counterpart leg within the 8-day window (or alerts if none)
+  const markTransfer = useAction(
+    (transactionId: string) =>
+      api<TransferMarkResult>(`/api/transactions/${transactionId}/transfer`, { method: "POST" }),
+    ["categories", "cashflow", "budget", "overview", "alerts"],
+  );
+  const flagRecurring = useAction(
+    (args: { transactionId: string; frequency: Frequency }) =>
+      api<RecurringFlagResult>(`/api/transactions/${args.transactionId}/recurring`, {
+        method: "POST",
+        json: { frequency: args.frequency },
+      }),
+    ["bills", "overview"],
+  );
 
   const fetchSuggestion = (transactionId: string) => {
     setAiLoading(true);
@@ -486,6 +510,11 @@ function Inbox({ categories }: { categories: Category[] }) {
           {aiNotice} <span className="link" style={{ marginLeft: 6 }} onClick={() => setAiNotice(null)}>dismiss</span>
         </div>
       )}
+      {flowNotice && (
+        <div className="panel muted" style={{ marginTop: 10, fontSize: 12, padding: "8px 12px", lineHeight: 1.5 }}>
+          {flowNotice} <span className="link" style={{ marginLeft: 6 }} onClick={() => setFlowNotice(null)}>dismiss</span>
+        </div>
+      )}
       <div style={{ textAlign: "center", padding: "26px 0 20px", animation: "bb-popin .2s ease-out" }} key={card.transaction.transactionId}>
         <div style={{ fontSize: 22, fontWeight: 600 }}>{card.transaction.merchant ?? "Unknown merchant"}</div>
         <div className="num" style={{ fontSize: 30, fontWeight: 600, marginTop: 8, color: card.transaction.amount > 0 ? "var(--accent)" : "var(--ink)" }}>
@@ -583,11 +612,67 @@ function Inbox({ categories }: { categories: Category[] }) {
         </div>
       )}
       <div style={{ display: "grid", marginTop: 8 }}>
-        <button className="btn-ghost" style={{ justifyContent: "center" }}
-          onClick={() => categorize.mutate({ transactionId: card.transaction.transactionId, categoryId: null, merchant: null })}>
-          Skip — mark as transfer / ignore
+        <button className="btn-ghost" style={{ justifyContent: "center" }} disabled={markTransfer.isPending}
+          title="Not income or spending — money moved to another of your own accounts. Leaves the budget now; validated when the matching leg appears within 8 days."
+          onClick={() =>
+            markTransfer.mutate(card.transaction.transactionId, {
+              onSuccess: (r) =>
+                setFlowNotice(
+                  r.matched
+                    ? "⇄ Transfer validated — the matching leg was already synced, both sides are paired."
+                    : "⇄ Marked as a transfer (pending) — it left the budget now; the system watches 8 days for the matching leg and alerts if none appears.",
+                ),
+            })
+          }>
+          ⇄ Transfer to another account
         </button>
       </div>
+      {recOpen ? (
+        <div className="panel" style={{ marginTop: 10, padding: "10px 12px", animation: "bb-popin .16s ease-out" }}>
+          <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+            <span className="label">🔁 Track "{card.transaction.merchant ?? "this charge"}" as recurring</span>
+            <select className="input" style={{ width: "auto", padding: "5px 8px", fontSize: 12 }} value={recFreq}
+              onChange={(e) => setRecFreq(e.target.value as Frequency)}>
+              {(["weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual"] as Frequency[]).map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
+            <button className="btn" style={{ padding: "6px 12px" }} disabled={flagRecurring.isPending}
+              onClick={() =>
+                flagRecurring.mutate(
+                  { transactionId: card.transaction.transactionId, frequency: recFreq },
+                  {
+                    onSuccess: (r) => {
+                      setFlowNotice(
+                        r.alreadyTracked
+                          ? `🔁 "${r.recurring.name}" is already in the bills registry — this charge was linked to it.`
+                          : `🔁 Added to Bills as pending — it confirms automatically when the next ${recFreq} charge arrives (still pick a category below).`,
+                      );
+                      setRecOpen(false);
+                    },
+                    onError: (e) => setFlowNotice(`🔁 ${e.message}`),
+                  },
+                )
+              }>
+              Track
+            </button>
+            <button className="btn-ghost" onClick={() => setRecOpen(false)}>Cancel</button>
+          </div>
+          <div className="muted" style={{ fontSize: 11, marginTop: 6, lineHeight: 1.5 }}>
+            Lands in Bills as “awaiting confirmation”. Auto-detection keeps running for everything you don't flag.
+          </div>
+        </div>
+      ) : (
+        card.transaction.amount < 0 && (
+          <div style={{ display: "grid", marginTop: 8 }}>
+            <button className="btn-ghost" style={{ justifyContent: "center" }}
+              title="Flag this as a repeating expense — it's added to the bills registry as pending and confirms itself when the next charge arrives"
+              onClick={() => setRecOpen(true)}>
+              🔁 This is a recurring expense…
+            </button>
+          </div>
+        )
+      )}
       <div className="row" style={{ gap: 8, marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--line)" }}>
         <span className="muted" style={{ fontSize: 11.5 }}>Not household spending?</span>
         <button className="btn-ghost" onClick={() => flag.mutate({ transactionId: card.transaction.transactionId, flags: { reimbursedBy: "work" } })}>

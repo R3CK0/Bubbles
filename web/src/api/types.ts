@@ -101,8 +101,15 @@ export interface TransactionListItem {
   accountId: string; accountName: string; accountMask: string | null; personId: string | null;
   categoryId: string | null; categorizationSource: "plaid" | "rule" | "manual";
   plaidPrimary: string | null; isTransfer: boolean;
+  /** Marked as a transfer but the counterpart hasn't been found yet. */
+  transferPending: boolean;
   reimbursedBy: "work" | "buildings" | null; goalId: string | null;
 }
+
+/** POST /api/transactions/:id/transfer */
+export interface TransferMarkResult { marked: boolean; matched: boolean }
+/** POST /api/transactions/:id/recurring */
+export interface RecurringFlagResult { recurring: Recurring; alreadyTracked: boolean }
 export interface TransactionsListView {
   month: string; count: number; totalIn: number; totalOut: number;
   transactions: TransactionListItem[];

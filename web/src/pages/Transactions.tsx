@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAction, useApi, useCtx } from "../api/hooks";
 import { api, qs } from "../api/client";
-import type { Category, TransactionListItem, TransactionsListView } from "../api/types";
+import type { Category, TransactionListItem, TransactionsListView, TransferMarkResult } from "../api/types";
 import { Card, EmptyState } from "../components/ui";
 import { Tip } from "../components/Tip";
 import { dayLabel, fmt, fmtC, monthLabel } from "../lib/format";
@@ -43,12 +43,25 @@ export function Transactions() {
       api(`/api/transactions/${args.transactionId}/categorize`, { method: "POST", json: { categoryId: args.categoryId } }),
     ["categories", "cashflow", "budget", "overview"],
   );
+  const markTransfer = useAction(
+    (transactionId: string) =>
+      api<TransferMarkResult>(`/api/transactions/${transactionId}/transfer`, { method: "POST" }),
+    ["categories", "cashflow", "budget", "overview", "alerts"],
+  );
+  const unmarkTransfer = useAction(
+    (transactionId: string) => api(`/api/transactions/${transactionId}/transfer`, { method: "DELETE" }),
+    ["categories", "cashflow", "budget", "overview"],
+  );
 
   const tops = cats.filter((c) => c.parent_id === null && !c.archived);
   const rowChips = (t: TransactionListItem) => (
     <>
       {t.pending && <span className="chip">pending</span>}
-      {t.isTransfer && <span className="chip">⇄ transfer</span>}
+      {t.isTransfer && (
+        t.transferPending
+          ? <span className="chip" style={{ background: "color-mix(in srgb, var(--warn) 14%, transparent)", color: "var(--warn)" }} title="marked as a transfer — waiting for the matching leg in another account">⇄ transfer · pending</span>
+          : <span className="chip" title="paired with its matching leg in another account">⇄ transferred</span>
+      )}
       {t.reimbursedBy === "work" && <span className="chip">💼 work</span>}
       {t.reimbursedBy === "buildings" && <span className="chip">🏢 buildings</span>}
       {t.goalId && <span className="chip chip-accent">🎯 goal</span>}
@@ -154,8 +167,19 @@ export function Transactions() {
             </div>
 
             {selected.isTransfer ? (
-              <div className="panel muted" style={{ marginTop: 18, fontSize: 12, padding: "10px 12px", lineHeight: 1.5 }}>
-                ⇄ Marked as a transfer between your own accounts — it carries no category and stays out of income and spending.
+              <div style={{ marginTop: 18 }}>
+                <div className="panel muted" style={{ fontSize: 12, padding: "10px 12px", lineHeight: 1.5 }}>
+                  {selected.transferPending
+                    ? <>⇄ Marked as a transfer — <b style={{ color: "var(--warn)" }}>pending</b>: the system is watching for the matching leg in another account (8-day window). It already stays out of income and spending.</>
+                    : <>⇄ Transferred — paired with its matching leg in another account. It carries no category and stays out of income and spending.</>}
+                </div>
+                <button className="btn-ghost" style={{ marginTop: 10 }} disabled={unmarkTransfer.isPending}
+                  onClick={() => {
+                    unmarkTransfer.mutate(selected.transactionId);
+                    setSelected({ ...selected, isTransfer: false, transferPending: false });
+                  }}>
+                  Not a transfer — unmark{!selected.transferPending && " (releases both legs)"}
+                </button>
               </div>
             ) : (
               <div style={{ marginTop: 18 }}>
@@ -178,6 +202,15 @@ export function Transactions() {
                 </select>
                 {categorize.isPending && <div className="muted" style={{ fontSize: 11.5, marginTop: 6 }}>Saving…</div>}
                 {categorize.isSuccess && !categorize.isPending && <div style={{ fontSize: 11.5, marginTop: 6, color: "var(--accent)" }}>✓ saved</div>}
+                <button className="btn-ghost" style={{ marginTop: 14 }} disabled={markTransfer.isPending}
+                  title="Money moved to another of your own accounts — leaves the budget now, validated when the matching leg appears within 8 days"
+                  onClick={() =>
+                    markTransfer.mutate(selected.transactionId, {
+                      onSuccess: (r) => setSelected({ ...selected, isTransfer: true, transferPending: !r.matched, categoryId: null }),
+                    })
+                  }>
+                  ⇄ Mark as transfer to another account
+                </button>
               </div>
             )}
           </div>
