@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useAlerts, useAction, useCtx, useOverview, usePersons, useVault } from "../api/hooks";
-import { api } from "../api/client";
+import { useAlerts, useAction, useCtx, useInvalidate, useOverview, usePersons, useVault } from "../api/hooks";
+import { api, ApiError } from "../api/client";
 import { useUi, COMBINED, shiftMonth } from "../stores/ui";
 import { monthLabel, monthShort } from "../lib/format";
 
@@ -77,10 +77,55 @@ export function Shell() {
   const loc = useLocation();
   const [bellOpen, setBellOpen] = useState(false);
   const [stripOpen, setStripOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncToast, setSyncToast] = useState<{ ok: boolean; text: string } | null>(null);
+  const invalidate = useInvalidate();
+  const didAutoSync = useRef(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = ui.theme;
   }, [ui.theme]);
+
+  /** Sync every linked bank. `auto` runs stay quiet on success; a manual run
+   *  (clicking the status pill) confirms, and either surfaces any failure. */
+  const runSync = useCallback(
+    async (opts?: { auto?: boolean }) => {
+      setSyncing(true);
+      try {
+        const r = await api<{ errors: { institution: string; error: string }[] }>("/api/sync", { method: "POST", json: {} });
+        invalidate([]);
+        if (r.errors.length > 0) {
+          const names = r.errors.map((e) => e.institution).join(", ");
+          setSyncToast({ ok: false, text: `Couldn't sync ${names}: ${r.errors[0]!.error}` });
+        } else if (!opts?.auto) {
+          setSyncToast({ ok: true, text: "All accounts synced." });
+        }
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 503) {
+          if (!opts?.auto) setSyncToast({ ok: false, text: "Bank connection is locked — unlock the vault on the server to sync." });
+        } else {
+          setSyncToast({ ok: false, text: `Sync failed: ${err instanceof Error ? err.message : String(err)}` });
+        }
+      } finally {
+        setSyncing(false);
+      }
+    },
+    [invalidate],
+  );
+
+  // Autosync once when the app opens, as soon as the vault is known-unlocked.
+  useEffect(() => {
+    if (didAutoSync.current || !vault.data?.unlocked) return;
+    didAutoSync.current = true;
+    void runSync({ auto: true });
+  }, [vault.data?.unlocked, runSync]);
+
+  // Auto-dismiss the sync toast.
+  useEffect(() => {
+    if (!syncToast) return;
+    const t = setTimeout(() => setSyncToast(null), 6000);
+    return () => clearTimeout(t);
+  }, [syncToast]);
 
   // keyboard: [ ] lens · , . month
   useEffect(() => {
@@ -175,9 +220,12 @@ export function Shell() {
               {uncat} to categorize
             </div>
           )}
-          <div className="row btn-ghost" title={lastSync ? `Last sync ${new Date(lastSync).toLocaleString()}` : "Never synced"} style={{ cursor: "default", gap: 7 }}>
-            <span className="dot" style={{ background: vaultLocked ? "var(--ink-muted)" : syncFresh ? "var(--accent)" : "var(--warn)", animation: "bb-breathe 3s ease-in-out infinite" }} />
-            <span>{lastSync ? (syncFresh ? "Synced" : "Stale") : "No sync"}</span>
+          <div className="row btn-ghost"
+            title={vaultLocked ? "Bank connection locked — unlock the vault on the server" : syncing ? "Syncing all accounts…" : lastSync ? `Last sync ${new Date(lastSync).toLocaleString()} · click to sync now` : "Click to sync all accounts"}
+            onClick={() => { if (!syncing) void runSync(); }}
+            style={{ cursor: syncing ? "default" : "pointer", gap: 7, opacity: syncing ? 0.65 : 1 }}>
+            <span className="dot" style={{ background: vaultLocked ? "var(--ink-muted)" : syncing ? "var(--gold)" : syncFresh ? "var(--accent)" : "var(--warn)", animation: "bb-breathe 3s ease-in-out infinite" }} />
+            <span>{syncing ? "Syncing…" : lastSync ? (syncFresh ? "Synced" : "Stale") : "No sync"}</span>
           </div>
           <div style={{ position: "relative" }}>
             <div className="btn-ghost" style={{ padding: 8 }} onClick={() => setBellOpen((s) => !s)}>
@@ -227,6 +275,16 @@ export function Shell() {
           <Outlet />
         </div>
       </main>
+
+      {syncToast && (
+        <div onClick={() => setSyncToast(null)}
+          style={{ position: "fixed", bottom: 20, right: 20, zIndex: 60, maxWidth: 380, padding: "12px 15px", borderRadius: 12, cursor: "pointer", background: "var(--surface)", border: `1px solid ${syncToast.ok ? "var(--accent)" : "var(--danger)"}`, boxShadow: "0 10px 34px rgba(0,0,0,0.32)", animation: "bb-popin .16s ease-out" }}>
+          <div className="row" style={{ gap: 9, alignItems: "flex-start" }}>
+            <span className="dot" style={{ marginTop: 5, flex: "none", background: syncToast.ok ? "var(--accent)" : "var(--danger)" }} />
+            <div style={{ fontSize: 12.5, lineHeight: 1.45 }}>{syncToast.text}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -21,3 +21,6 @@ services:
       # Gemini expense-review assistant (optional — feature is disabled without it)
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      # Telegram push notifications for failed bank syncs (optional — both required)
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}

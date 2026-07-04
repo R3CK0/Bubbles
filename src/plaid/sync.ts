@@ -3,6 +3,7 @@ import { createPlaidClient } from "./client.js";
 import { mapPlaidTransaction, removedTransactionId } from "./transactions.js";
 import { getItem, listItems, markTransactionRemoved, setSyncCursor, upsertTransaction } from "../db/repository.js";
 import { withRetry } from "../util/retry.js";
+import { notifySyncFailure } from "../util/notify.js";
 
 export interface SyncResult {
   itemId: string;
@@ -139,20 +140,33 @@ export async function syncItemTransactions(vault: Vault, itemId: string): Promis
 
 export interface SyncAllResult {
   results: SyncResult[];
-  errors: Array<{ itemId: string; error: string }>;
+  errors: Array<{ itemId: string; institution: string; error: string }>;
 }
 
-/** Syncs every linked item. A failure on one bank doesn't block the others. */
+/**
+ * Syncs every linked item. A failure on one bank doesn't block the others.
+ * Any failures fire a single push notification (Telegram, if configured) so
+ * a silently-broken connection surfaces even on unattended nightly runs.
+ */
 export async function syncAllItems(vault: Vault): Promise<SyncAllResult> {
   const results: SyncResult[] = [];
-  const errors: Array<{ itemId: string; error: string }> = [];
+  const errors: SyncAllResult["errors"] = [];
 
   for (const item of listItems()) {
     try {
       results.push(await syncItemTransactions(vault, item.item_id));
     } catch (err) {
-      errors.push({ itemId: item.item_id, error: err instanceof Error ? err.message : String(err) });
+      errors.push({
+        itemId: item.item_id,
+        institution: item.institution_name ?? item.item_id,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
+  }
+
+  if (errors.length > 0) {
+    // fire-and-forget: notification failures must never fail the sync
+    void notifySyncFailure(errors.map((e) => ({ institution: e.institution, error: e.error })));
   }
 
   return { results, errors };
