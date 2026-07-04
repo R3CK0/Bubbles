@@ -46,8 +46,8 @@ afterAll(() => _setDbForTests(null));
 
 describe("planning lifecycle", () => {
   it("creates goals, solves with budget-derived free cash flow, approves a plan", () => {
-    createGoal({ goalType: "trip", name: "Greece", targetAmount: 1700, targetDate: "2026-12-01", priority: 2 });
-    createGoal({ goalType: "event", name: "Wedding", targetAmount: 1300, targetDate: "2026-09-01", priority: 1 });
+    createGoal({ goalType: "trip", category: "spending", name: "Greece", targetAmount: 1700, targetDate: "2026-12-01", priority: 2 });
+    createGoal({ goalType: "event", category: "spending", name: "Wedding", targetAmount: 1300, targetDate: "2026-09-01", priority: 1 });
 
     const view = getGoalsView(ctx());
     expect(view.goals.length).toBe(2);

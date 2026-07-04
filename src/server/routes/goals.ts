@@ -28,11 +28,34 @@ import {
   solveOverridesSchema,
 } from "../contracts.js";
 import { requireParam } from "../params.js";
+import { listAccounts } from "../../db/repository.js";
+import { listDebts } from "../../db/repositories/debts.js";
 
 export const goalsRouter = Router();
 
 goalsRouter.get("/api/goals", (req, res) => {
   res.json(getGoalsView(buildContext(req.query)));
+});
+
+/** Linkable targets for the goal form: accounts (saving/loan) and debts (loan). */
+goalsRouter.get("/api/goals/options", (_req, res) => {
+  // An account already represented by an active debt would show up twice in
+  // the loan picker; the debt row (with APR etc.) wins.
+  const debtAccounts = new Set(listDebts("active").map((d) => d.account_id).filter(Boolean));
+  const accounts = listAccounts()
+    .filter((a) => a.tracked === 1 && a.is_closed === 0 && !debtAccounts.has(a.account_id))
+    .map((a) => ({
+      accountId: a.account_id,
+      name: a.name ?? a.official_name ?? a.mask ?? a.account_id,
+      type: a.type,
+      currentBalance: a.current_balance,
+    }));
+  const debts = listDebts("active").map((d) => ({
+    debtId: d.debt_id,
+    name: d.name,
+    currentBalance: d.current_balance,
+  }));
+  res.json({ accounts, debts });
 });
 
 goalsRouter.post("/api/goals", (req, res) => {

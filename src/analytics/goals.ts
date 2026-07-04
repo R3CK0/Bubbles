@@ -5,15 +5,39 @@ import type { MonthISO } from "./types.js";
 import { monthOf, monthsBetween } from "./calendar.js";
 import { roundCents } from "./money.js";
 
+/**
+ * How a goal measures progress:
+ *  - saving:   a linked account balance climbs toward the target amount
+ *  - spending: transactions tagged to the goal spend down its own budget
+ *  - loan:     a linked debt/account balance falls toward the target amount
+ */
+export type GoalCategory = "saving" | "spending" | "loan";
+
 export interface GoalInput {
   goalId: string;
   goalType: string;
+  /** Defaults to "saving" when absent (extra/what-if goals). */
+  category?: GoalCategory;
   name: string;
   personId: string | null;
   priority: number;
   targetAmount: number;
   fundedAmount: number;
   targetDate: string | null;
+}
+
+/**
+ * Express a loan-payoff goal ("reduce the balance to X by date D") in the
+ * sinking-fund terms the solver and progress math already speak:
+ * targetAmount = total to pay down, fundedAmount = paid down so far.
+ */
+export function loanGoalAsFunding(state: { startBalance: number; currentBalance: number; targetBalance: number }): {
+  targetAmount: number;
+  fundedAmount: number;
+} {
+  const targetAmount = Math.max(0, state.startBalance - state.targetBalance);
+  const fundedAmount = Math.min(targetAmount, Math.max(0, state.startBalance - state.currentBalance));
+  return { targetAmount: roundCents(targetAmount), fundedAmount: roundCents(fundedAmount) };
 }
 
 /**

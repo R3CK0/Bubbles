@@ -5,9 +5,12 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "../db.js";
 import type { GoalInput } from "../../analytics/goals.js";
 
+export type GoalCategory = "saving" | "spending" | "loan";
+
 export interface GoalRow {
   goal_id: string;
   goal_type: "house" | "kid" | "trip" | "purchase" | "savings" | "event" | "emergency_fund" | "debt_payoff";
+  category: GoalCategory;
   name: string;
   person_id: string | null;
   target_amount: number;
@@ -26,6 +29,7 @@ export function toGoalInput(row: GoalRow): GoalInput {
   return {
     goalId: row.goal_id,
     goalType: row.goal_type,
+    category: row.category,
     name: row.name,
     personId: row.person_id,
     priority: row.priority,
@@ -48,6 +52,7 @@ export function getGoal(goalId: string): GoalRow | undefined {
 
 export interface GoalCreate {
   goalType: GoalRow["goal_type"];
+  category: GoalCategory;
   name: string;
   personId?: string | null;
   targetAmount: number;
@@ -64,6 +69,7 @@ export function createGoal(input: GoalCreate, now: string): GoalRow {
   const row: GoalRow = {
     goal_id: randomUUID(),
     goal_type: input.goalType,
+    category: input.category,
     name: input.name,
     person_id: input.personId ?? null,
     target_amount: input.targetAmount,
@@ -79,8 +85,8 @@ export function createGoal(input: GoalCreate, now: string): GoalRow {
   };
   getDb()
     .prepare(
-      `INSERT INTO goals (goal_id, goal_type, name, person_id, target_amount, target_date, priority, linked_account_id, linked_debt_id, funded_amount, status, params_json, created_at, notes)
-       VALUES (@goal_id, @goal_type, @name, @person_id, @target_amount, @target_date, @priority, @linked_account_id, @linked_debt_id, @funded_amount, @status, @params_json, @created_at, @notes)`,
+      `INSERT INTO goals (goal_id, goal_type, category, name, person_id, target_amount, target_date, priority, linked_account_id, linked_debt_id, funded_amount, status, params_json, created_at, notes)
+       VALUES (@goal_id, @goal_type, @category, @name, @person_id, @target_amount, @target_date, @priority, @linked_account_id, @linked_debt_id, @funded_amount, @status, @params_json, @created_at, @notes)`,
     )
     .run(row);
   return row;
@@ -114,17 +120,38 @@ export function updateGoal(goalId: string, patch: Partial<GoalRow>): GoalRow | u
   return getGoal(goalId);
 }
 
-/** Refresh funded_amount from linked account balances (nightly). */
+/** Refresh saving-goal funded_amount from linked account balances (nightly + on view). */
 export function refreshFundedFromLinkedAccounts(): number {
   return getDb()
     .prepare(
       `UPDATE goals SET funded_amount = (
          SELECT COALESCE(a.current_balance, 0) FROM accounts a WHERE a.account_id = goals.linked_account_id
        )
-       WHERE linked_account_id IS NOT NULL AND status = 'active'
+       WHERE linked_account_id IS NOT NULL AND status = 'active' AND category = 'saving'
          AND EXISTS (SELECT 1 FROM accounts a WHERE a.account_id = goals.linked_account_id)`,
     )
     .run().changes;
+}
+
+/**
+ * Current balance a loan goal is paying down: the linked debt's balance, or
+ * the linked account's (credit accounts report liabilities as positive;
+ * abs() guards signed exports). Null when nothing is linked.
+ */
+export function goalLinkedBalance(row: Pick<GoalRow, "linked_debt_id" | "linked_account_id">): number | null {
+  if (row.linked_debt_id) {
+    const debt = getDb().prepare(`SELECT current_balance FROM debts WHERE debt_id = ?`).get(row.linked_debt_id) as
+      | { current_balance: number }
+      | undefined;
+    if (debt) return Math.abs(debt.current_balance);
+  }
+  if (row.linked_account_id) {
+    const acct = getDb()
+      .prepare(`SELECT current_balance FROM accounts WHERE account_id = ?`)
+      .get(row.linked_account_id) as { current_balance: number | null } | undefined;
+    if (acct?.current_balance != null) return Math.abs(acct.current_balance);
+  }
+  return null;
 }
 
 // ---- goal line items ----

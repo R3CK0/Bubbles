@@ -117,7 +117,8 @@ function catalog(): string {
     }
   }
   lines.push("", "ACTIVE GOALS (goal_id — name, with subcategories as line_id — name):");
-  for (const g of listGoals("active")) {
+  // Only spending goals accept tagged transactions; saving/loan goals track balances.
+  for (const g of listGoals("active").filter((g) => g.category === "spending")) {
     lines.push(`- ${g.goal_id} — ${g.name} (${g.goal_type.replace(/_/g, " ")})`);
     for (const li of listLineItems(g.goal_id)) {
       if (li.status !== "cancelled") lines.push(`  - ${li.line_id} — ${li.name}`);

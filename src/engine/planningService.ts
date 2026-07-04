@@ -7,6 +7,7 @@
 import {
   eventBudget,
   goalProgress,
+  loanGoalAsFunding,
   requiredMonthly,
   roundCents,
   solveAffordability,
@@ -29,6 +30,7 @@ import {
   deleteScenario,
   getGoal,
   getScenario,
+  goalLinkedBalance,
   listGoals,
   listLineItems,
   listScenarios,
@@ -51,6 +53,10 @@ import { getNumberSetting } from "../db/repositories/ops.js";
 export interface GoalCardOut extends GoalRow {
   progress: number;
   requiredMonthly: number | null;
+  /** Loan goals: the linked debt/account balance still owed; null otherwise. */
+  currentBalance: number | null;
+  /** Loan goals: the raw reduce-to balance (target_amount is normalized to total paydown). */
+  targetBalance: number | null;
   /** Line items double as the goal's subcategories; `spent` sums the transactions tagged to each. */
   lineItems: (GoalLineItemRow & { spent: number })[];
   eventBudget: { committed: number; paid: number; remaining: number } | null;
@@ -58,12 +64,38 @@ export interface GoalCardOut extends GoalRow {
   taggedSpend: { total: number; month: number };
 }
 
+/**
+ * Category-aware GoalInput: normalizes every goal into the sinking-fund terms
+ * (targetAmount to accumulate, fundedAmount so far) that goalProgress,
+ * requiredMonthly, and the solver all speak.
+ *  - saving:   funded_amount mirrors the linked account balance (refresh below)
+ *  - spending: funded = net spend of transactions tagged to the goal
+ *  - loan:     target = start − reduce-to balance, funded = paid down so far
+ */
+function normalizedGoalInput(g: GoalRow, taggedTotal: Map<string, number>): GoalInput {
+  const base = toGoalInput(g);
+  if (g.category === "spending") {
+    return { ...base, fundedAmount: Math.max(0, taggedTotal.get(g.goal_id) ?? 0) };
+  }
+  if (g.category === "loan") {
+    const current = goalLinkedBalance(g);
+    const params = g.params_json ? (JSON.parse(g.params_json) as { startBalance?: number }) : {};
+    const start = params.startBalance ?? current ?? g.target_amount;
+    return {
+      ...base,
+      ...loanGoalAsFunding({ startBalance: start, currentBalance: current ?? start, targetBalance: g.target_amount }),
+    };
+  }
+  return base;
+}
+
 export function getGoalsView(ctx: EngineContext): { goals: GoalCardOut[]; solve: SolveResult } {
+  refreshFundedFromLinkedAccounts(); // saving goals track their account live, not just nightly
   const goals = listGoals("active").filter((g) => inLens(g.person_id, ctx.lens));
   const taggedTotal = goalTaggedSpend();
   const taggedMonth = goalTaggedSpend(ctx.range);
   const cards = goals.map((g) => {
-    const input = toGoalInput(g);
+    const input = normalizedGoalInput(g, taggedTotal);
     const lineSpend = goalLineTaggedSpend(g.goal_id);
     const lineItems = listLineItems(g.goal_id).map((li) => ({
       ...li,
@@ -71,8 +103,14 @@ export function getGoalsView(ctx: EngineContext): { goals: GoalCardOut[]; solve:
     }));
     return {
       ...g,
+      // Cards show the normalized amounts so all three categories read the
+      // same way: "funded X of Y". For loans that's paid-down of total paydown.
+      target_amount: input.targetAmount,
+      funded_amount: input.fundedAmount,
       progress: goalProgress(input),
       requiredMonthly: requiredMonthly(input, ctx.month),
+      currentBalance: g.category === "loan" ? goalLinkedBalance(g) : null,
+      targetBalance: g.category === "loan" ? g.target_amount : null,
       lineItems,
       eventBudget: g.goal_type === "event" && lineItems.length > 0 ? eventBudget(lineItems) : null,
       taggedSpend: { total: taggedTotal.get(g.goal_id) ?? 0, month: taggedMonth.get(g.goal_id) ?? 0 },
@@ -128,9 +166,10 @@ function discretionaryCategories(month: string): DiscretionaryCategory[] {
 export { budgetedFreeCashFlow };
 
 export function buildSolverInputs(ctx: EngineContext, overrides: SolveOverrides = {}): SolverInputs {
+  const taggedTotal = goalTaggedSpend();
   let goals = listGoals("active")
     .filter((g) => inLens(g.person_id, ctx.lens))
-    .map(toGoalInput);
+    .map((g) => normalizedGoalInput(g, taggedTotal));
   for (const shift of overrides.goalShifts ?? []) {
     goals = goals.map((g) => (g.goalId === shift.goalId ? { ...g, targetDate: shift.targetDate } : g));
   }
@@ -166,6 +205,17 @@ export function solve(ctx: EngineContext, overrides: SolveOverrides = {}): Solve
 // ---- goal CRUD passthroughs ----
 
 export function createGoal(input: GoalCreate): GoalRow {
+  // Loan goals measure progress from where the balance started; capture it now.
+  if (input.category === "loan") {
+    const params = (input.params ?? {}) as { startBalance?: number };
+    if (params.startBalance === undefined) {
+      const start = goalLinkedBalance({
+        linked_debt_id: input.linkedDebtId ?? null,
+        linked_account_id: input.linkedAccountId ?? null,
+      });
+      if (start !== null) input = { ...input, params: { ...params, startBalance: start } };
+    }
+  }
   return repoCreateGoal(input, new Date().toISOString());
 }
 

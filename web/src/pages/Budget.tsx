@@ -685,7 +685,7 @@ function Inbox({ categories }: { categories: Category[] }) {
             flag.mutate({ transactionId: card.transaction.transactionId, flags: { goalId, goalLineId: lineId || null } });
           }}>
           <option value="">🎯 Goal spending…</option>
-          {(goals.data?.goals ?? []).map((g) => (
+          {(goals.data?.goals ?? []).filter((g) => g.category === "spending").map((g) => (
             <optgroup key={g.goal_id} label={g.name}>
               <option value={g.goal_id}>{g.name} (general)</option>
               {g.lineItems.filter((li) => li.status !== "cancelled").map((li) => (

@@ -222,14 +222,24 @@ export interface AccountPositions {
 
 // ---- goals ----
 export interface GoalLineItem { line_id: string; goal_id: string; name: string; amount: number; due_date: string | null; status: "planned" | "deposit_paid" | "paid" | "cancelled"; transaction_id: string | null; spent: number }
+export type GoalCategory = "saving" | "spending" | "loan";
 export interface Goal {
   goal_id: string; goal_type: "house" | "kid" | "trip" | "purchase" | "savings" | "event" | "emergency_fund" | "debt_payoff";
+  category: GoalCategory;
   name: string; person_id: string | null; target_amount: number; target_date: string | null; priority: number;
   linked_account_id: string | null; linked_debt_id: string | null; funded_amount: number;
   status: "active" | "achieved" | "abandoned" | "paused"; notes: string | null;
   progress: number; requiredMonthly: number | null; lineItems: GoalLineItem[];
+  /** Loan goals: linked debt/account balance still owed. */
+  currentBalance: number | null;
+  /** Loan goals: the reduce-to balance (target_amount holds the normalized total paydown). */
+  targetBalance: number | null;
   eventBudget: { committed: number; paid: number; remaining: number } | null;
   taggedSpend: { total: number; month: number };
+}
+export interface GoalOptions {
+  accounts: { accountId: string; name: string; type: string | null; currentBalance: number | null }[];
+  debts: { debtId: string; name: string; currentBalance: number }[];
 }
 export interface GoalVerdict { goalId: string; name: string; feasible: "yes" | "tight" | "no"; fundedBy: string | null; gap: number; requiredMonthly: number | null }
 export interface SolveResult {
