@@ -4,7 +4,7 @@
 
 ### A private, local-first finance tracker for households
 
-Bubbles links your bank accounts through Plaid, keeps every balance and transaction in a local SQLite database, and turns them into budgets, cash-flow analytics, debt payoff plans, and savings goals — all on your own machine. Nothing leaves the computer except the calls to Plaid itself, and every API key is sealed in a vault that only opens with a physical **YubiKey**.
+Bubbles links your bank accounts through Plaid, keeps every balance and transaction in a local SQLite database, and turns them into budgets, cash-flow analytics, debt payoff plans, and savings goals, all on your own machine. Nothing leaves the computer except the calls to Plaid itself, and every API key is sealed in a vault that only opens with a physical **YubiKey**.
 
 <br/>
 
@@ -22,7 +22,7 @@ Bubbles links your bank accounts through Plaid, keeps every balance and transact
 ---
 
 > [!NOTE]
-> **Bubbles is a work in progress.** It's an actively-evolving personal project — features land and change often, and rough edges are expected. **Feedback, ideas, and bug reports are very welcome** — please [open an issue](../../issues) or start a discussion.
+> **Bubbles is a work in progress.** It's an actively evolving personal project, so features land and change often and rough edges are expected. **Feedback, ideas, and bug reports are very welcome**, so please [open an issue](../../issues) or start a discussion.
 
 ---
 
@@ -30,7 +30,7 @@ Bubbles links your bank accounts through Plaid, keeps every balance and transact
 
 <div align="center">
 
-**Overview** — combined net worth, monthly cash flow, and goal progress at a glance
+**Overview:** combined net worth, monthly cash flow, and goal progress at a glance
 
 <img src="docs/screenshots/overview.png" alt="Overview dashboard" width="900"/>
 
@@ -57,7 +57,7 @@ Bubbles links your bank accounts through Plaid, keeps every balance and transact
     </td>
     <td width="50%" valign="top">
       <strong>Transactions</strong><br/>
-      <sub>The full synced ledger — searchable, filterable, and re-categorizable.</sub><br/><br/>
+      <sub>The full synced ledger: searchable, filterable, and re-categorizable.</sub><br/><br/>
       <img src="docs/screenshots/transactions.png" alt="Transactions" />
     </td>
   </tr>
@@ -67,18 +67,18 @@ Bubbles links your bank accounts through Plaid, keeps every balance and transact
 
 ## ✨ Features
 
-- **🏦 Bank sync via Plaid** — link accounts once, then pull balances and transactions incrementally (cursor-based, only what changed).
-- **📊 Budgets & cash flow** — per-person and combined budgets, income vs. spend, savings rate, and a variance flux matrix.
-- **🎯 Goals, three kinds** — every goal is one of:
-  - **Saving** — tracks a linked account's balance up toward a target.
-  - **Spending** — its own envelope for a one-off (a trip, a big gift); tagged transactions skip the household budget and count here.
-  - **Loan payoff** — tracks a debt down to a target balance by a date, advancing as you pay it off.
+- **🏦 Bank sync via Plaid:** link accounts once, then pull balances and transactions incrementally (cursor-based, only what changed).
+- **📊 Budgets & cash flow:** per-person and combined budgets, income vs. spend, savings rate, and a variance flux matrix.
+- **🎯 Goals, three kinds.** Every goal is one of:
+  - **Saving:** tracks a linked account's balance up toward a target.
+  - **Spending:** its own envelope for a one-off (a trip, a big gift); tagged transactions skip the household budget and count here.
+  - **Loan payoff:** tracks a debt down to a target balance by a date, advancing as you pay it off.
   
-  A live affordability solver checks whether your goals, debts, and contributions all fit your free cash flow — drag a goal's date and it re-plans instantly.
-- **💳 Debt tracking** — short- and long-term debts, avalanche/snowball payoff strategies, and interest projections.
-- **🤖 AI expense inbox** *(optional)* — a Gemini-backed assistant proposes a category or goal for each unclassified transaction.
-- **📈 Net worth, investments & taxes** — registered-account room (FHSA/TFSA/RRSP), holdings, and Québec/Canada tax estimates.
-- **🔐 Local-first & private** — everything lives in one SQLite file on your machine; the only outbound calls are to Plaid.
+  A live affordability solver checks whether your goals, debts, and contributions all fit your free cash flow; drag a goal's date and it re-plans instantly.
+- **💳 Debt tracking:** short- and long-term debts, avalanche/snowball payoff strategies, and interest projections.
+- **🤖 AI expense inbox** *(optional)*: a Gemini-backed assistant proposes a category or goal for each unclassified transaction.
+- **📈 Net worth, investments & taxes:** registered-account room (FHSA/TFSA/RRSP), holdings, and Québec/Canada tax estimates.
+- **🔐 Local-first & private:** everything lives in one SQLite file on your machine; the only outbound calls are to Plaid.
 
 ## 🧱 Tech stack
 
@@ -92,9 +92,9 @@ Bubbles links your bank accounts through Plaid, keeps every balance and transact
 
 ## 🔐 How the vault works
 
-All Plaid API keys and per-bank access tokens live in an encrypted vault at `data/vault/secrets.age`. It's encrypted with [`age`](https://github.com/FiloSottile/age) to a recipient backed by your YubiKey's PIV applet, via [`age-plugin-yubikey`](https://github.com/str4d/age-plugin-yubikey). **Decrypting requires the physical key inserted, your PIV PIN, and a touch.** No custom cryptography is involved — Bubbles shells out to those two audited tools for every encrypt/decrypt.
+All Plaid API keys and per-bank access tokens live in an encrypted vault at `data/vault/secrets.age`. It's encrypted with [`age`](https://github.com/FiloSottile/age) to a recipient backed by your YubiKey's PIV applet, via [`age-plugin-yubikey`](https://github.com/str4d/age-plugin-yubikey). **Decrypting requires the physical key inserted, your PIV PIN, and a touch.** No custom cryptography is involved; Bubbles shells out to those two audited tools for every encrypt/decrypt.
 
-**Session grants** let the server run unattended for up to 30 days: `vault grant-session` unlocks the vault with your YubiKey once, then re-seals the secrets under a freshly generated random key stored in the macOS Keychain (expiry enforced in code). A running server detects a fresh grant within a minute — no restart needed. When a grant expires, sync locks again until you touch the YubiKey and re-run `grant-session`; **the dashboards keep working from local data throughout.**
+**Session grants** let the server run unattended for up to 30 days: `vault grant-session` unlocks the vault with your YubiKey once, then re-seals the secrets under a freshly generated random key stored in the macOS Keychain (expiry enforced in code). A running server detects a fresh grant within a minute, with no restart needed. When a grant expires, sync locks again until you touch the YubiKey and re-run `grant-session`; **the dashboards keep working from local data throughout.**
 
 ## 🚀 Getting started
 
@@ -117,7 +117,7 @@ Insert your YubiKey, then provision the vault (this generates a PIV identity on 
 npm run vault -- init
 ```
 
-Store your Plaid API keys — this is the **only** place Plaid credentials are ever written to disk, and it requires a YubiKey touch:
+Store your Plaid API keys. This is the **only** place Plaid credentials are ever written to disk, and it requires a YubiKey touch:
 
 ```bash
 npm run vault -- set-plaid-keys --client-id <id> --secret <secret> --env sandbox
@@ -147,8 +147,8 @@ To link a bank in Plaid **Sandbox**, open `http://127.0.0.1:4000/link-test.html`
 Build the backend and the web app, then start the compiled server:
 
 ```bash
-npm run build        # compile the backend (tsc → dist/)
-npm run web:build    # build the frontend (Vite → public/, served by the backend)
+npm run build        # compile the backend (tsc into dist/)
+npm run web:build    # build the frontend (Vite into public/, served by the backend)
 npm start            # node dist/index.js
 ```
 
@@ -171,25 +171,25 @@ The API is published to `127.0.0.1:4000` only (never all interfaces), matching t
 
 **The vault CLI always runs on the host, never in the container.** Docker can't pass a physical YubiKey's USB/PC-SC access through to a Linux container, so:
 
-- **Host** — the only place that ever touches the physical key: `init`, `set-plaid-keys`, and `grant-session` all run here with plain `npm run vault -- …`.
-- **Container** — only ever *consumes* an existing session grant. It boots **locked** when there's no valid grant (dashboards still work from local data) and unlocks itself as soon as a grant appears in the shared `./data`.
+- **Host:** the only place that ever touches the physical key. `init`, `set-plaid-keys`, and `grant-session` all run here with plain `npm run vault -- <command>`.
+- **Container:** only ever *consumes* an existing session grant. It boots **locked** when there's no valid grant (dashboards still work from local data) and unlocks itself as soon as a grant appears in the shared `./data`.
 
-Grants for the container **must** be issued with `--portable` — the default stores the session key only in the macOS Keychain, which a Linux container can't read:
+Grants for the container **must** be issued with `--portable`. The default stores the session key only in the macOS Keychain, which a Linux container can't read:
 
 ```bash
 # All on the HOST, YubiKey required:
-npm run vault -- init                                       # once
-npm run vault -- set-plaid-keys --client-id … --secret …    # once
-npm run vault -- grant-session --days 30 --portable         # every ≤30 days
+npm run vault -- init                                              # once
+npm run vault -- set-plaid-keys --client-id <id> --secret <secret> # once
+npm run vault -- grant-session --days 30 --portable                # every 30 days or less
 
-docker compose up -d                                        # container serves the app; picks up grants live
+docker compose up -d                                               # container serves the app; picks up grants live
 ```
 
-Both host and container read/write the **same `./data` directory** — it's a bind mount (`./data:/app/data` in `docker-compose.yml`), not a Docker-managed volume, so the host-run vault CLI and the containerized server see identical files.
+Both host and container read/write the **same `./data` directory**, a bind mount (`./data:/app/data` in `docker-compose.yml`) rather than a Docker-managed volume, so the host-run vault CLI and the containerized server see identical files.
 
 ## ⚙️ Configuration
 
-Copy `.env.example` to `.env` for local overrides (port, host, Plaid products/country codes, optional Gemini key). **None of these values are secret** — the actual Plaid credentials live only in the YubiKey vault.
+Copy `.env.example` to `.env` for local overrides (port, host, Plaid products/country codes, optional Gemini key). **None of these values are secret;** the actual Plaid credentials live only in the YubiKey vault.
 
 ```bash
 set -a; source .env; set +a; npm run dev
@@ -201,6 +201,6 @@ Everything lives under `./data` (gitignored): the SQLite database (`finances.db`
 
 ## 💬 Status & feedback
 
-Bubbles is an evolving work in progress and a personal project — expect frequent changes and the occasional rough edge. **All feedback is appreciated**: [open an issue](../../issues) with bugs, ideas, or questions.
+Bubbles is an evolving work in progress and a personal project, so expect frequent changes and the occasional rough edge. **All feedback is appreciated**: [open an issue](../../issues) with bugs, ideas, or questions.
 
 <div align="center"><sub>Made with 🫧 by Nicholas Massad</sub></div>
