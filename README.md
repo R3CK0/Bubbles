@@ -1,225 +1,206 @@
-# Finances backend
+<div align="center">
 
-Local-first backend service that links bank accounts through Plaid and syncs
-balances/transactions into a local SQLite database. All Plaid API keys and
-per-bank access tokens are stored in an encrypted vault that can only be
-decrypted with a physical YubiKey.
+# 🫧 Bubbles
 
-The SQLite schema is defined as a numbered migration chain in
-[`src/db/migrations/`](src/db/migrations), applied automatically on boot and
-tracked in a `schema_migrations` table (see `docs/DATA_MODEL.md` for the full
-design). It covers banking (items/accounts/transactions), categories/budgets,
-recurring payments/debts, goals/plans, investments, registered accounts/tax,
-and operational tables (alerts/reports/decisions/sync runs) — schema only for
-now; the analytics engine and API surface for these domains come in a later
-pass.
+### A private, local-first finance tracker for households
 
-## How the vault works
+Bubbles links your bank accounts through Plaid, keeps every balance and transaction in a local SQLite database, and turns them into budgets, cash-flow analytics, debt payoff plans, and savings goals — all on your own machine. Nothing leaves the computer except the calls to Plaid itself, and every API key is sealed in a vault that only opens with a physical **YubiKey**.
 
-- Secrets (`data/vault/secrets.age`) are encrypted with [`age`](https://github.com/FiloSottile/age)
-  to a recipient backed by your YubiKey's PIV applet, via
-  [`age-plugin-yubikey`](https://github.com/str4d/age-plugin-yubikey). Decrypting
-  requires the physical key to be inserted, your PIV PIN, and a touch.
-- Nothing about this scheme is custom cryptography — we shell out to those two
-  audited tools for every encrypt/decrypt operation.
-- **Session grants** let the server run unattended for up to 30 days: running
-  `vault grant-session` unlocks the vault with your YubiKey once, then seals
-  the secrets with a freshly generated random key stored in the macOS
-  Keychain (with expiry metadata enforced in code). Pass `--portable` to also
-  write that key as a 0600 file under `data/vault/` — required when the
-  server runs in Docker, since a Linux container can't read the macOS
-  Keychain. A RUNNING server (local or container) detects a fresh grant
-  automatically within a minute — no restart needed. When a grant expires,
-  sync locks again until you touch the YubiKey and re-run `grant-session`;
-  the dashboards keep working from local data throughout.
+<br/>
 
-## Prerequisites
+![Status](https://img.shields.io/badge/status-work_in_progress-f5a623?style=flat-square)
+![Local-first](https://img.shields.io/badge/local--first-100%25-2ecc9b?style=flat-square)
+![Secured by YubiKey](https://img.shields.io/badge/secrets-YubiKey_vault-3b82f6?style=flat-square)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178c6?style=flat-square&logo=typescript&logoColor=white)
+![React](https://img.shields.io/badge/React-149eca?style=flat-square&logo=react&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-003b57?style=flat-square&logo=sqlite&logoColor=white)
+
+<sub>Built by **Nicholas Massad**</sub>
+
+</div>
+
+---
+
+> [!NOTE]
+> **Bubbles is a work in progress.** It's an actively-evolving personal project — features land and change often, and rough edges are expected. **Feedback, ideas, and bug reports are very welcome** — please [open an issue](../../issues) or start a discussion.
+
+---
+
+## 📸 A look inside
+
+<div align="center">
+
+**Overview** — combined net worth, monthly cash flow, and goal progress at a glance
+
+<img src="docs/screenshots/overview.png" alt="Overview dashboard" width="900"/>
+
+</div>
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>Cash Flow</strong><br/>
+      <sub>Money in vs. out, savings rate, and a month-by-month flux matrix vs. budget.</sub><br/><br/>
+      <img src="docs/screenshots/cashflow.png" alt="Cash flow" />
+    </td>
+    <td width="50%" valign="top">
+      <strong>Goals</strong><br/>
+      <sub>Saving, spending, and loan-payoff goals on one feasibility-solved timeline.</sub><br/><br/>
+      <img src="docs/screenshots/goals.png" alt="Goals" />
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <strong>Budget</strong><br/>
+      <sub>Per-category budgets with an AI-assisted inbox for uncategorized spending.</sub><br/><br/>
+      <img src="docs/screenshots/budget.png" alt="Budget" />
+    </td>
+    <td width="50%" valign="top">
+      <strong>Transactions</strong><br/>
+      <sub>The full synced ledger — searchable, filterable, and re-categorizable.</sub><br/><br/>
+      <img src="docs/screenshots/transactions.png" alt="Transactions" />
+    </td>
+  </tr>
+</table>
+
+<sub>The data shown above is anonymized demo data.</sub>
+
+## ✨ Features
+
+- **🏦 Bank sync via Plaid** — link accounts once, then pull balances and transactions incrementally (cursor-based, only what changed).
+- **📊 Budgets & cash flow** — per-person and combined budgets, income vs. spend, savings rate, and a variance flux matrix.
+- **🎯 Goals, three kinds** — every goal is one of:
+  - **Saving** — tracks a linked account's balance up toward a target.
+  - **Spending** — its own envelope for a one-off (a trip, a big gift); tagged transactions skip the household budget and count here.
+  - **Loan payoff** — tracks a debt down to a target balance by a date, advancing as you pay it off.
+  
+  A live affordability solver checks whether your goals, debts, and contributions all fit your free cash flow — drag a goal's date and it re-plans instantly.
+- **💳 Debt tracking** — short- and long-term debts, avalanche/snowball payoff strategies, and interest projections.
+- **🤖 AI expense inbox** *(optional)* — a Gemini-backed assistant proposes a category or goal for each unclassified transaction.
+- **📈 Net worth, investments & taxes** — registered-account room (FHSA/TFSA/RRSP), holdings, and Québec/Canada tax estimates.
+- **🔐 Local-first & private** — everything lives in one SQLite file on your machine; the only outbound calls are to Plaid.
+
+## 🧱 Tech stack
+
+| Layer | Tech |
+|---|---|
+| Backend | Node.js · TypeScript · Express · [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) |
+| Frontend | React · Vite · TanStack Query · Zustand |
+| Data | Plaid API · local SQLite (WAL mode) |
+| Secrets | [`age`](https://github.com/FiloSottile/age) + [`age-plugin-yubikey`](https://github.com/str4d/age-plugin-yubikey) |
+| Deploy | Docker · Docker Compose |
+
+## 🔐 How the vault works
+
+All Plaid API keys and per-bank access tokens live in an encrypted vault at `data/vault/secrets.age`. It's encrypted with [`age`](https://github.com/FiloSottile/age) to a recipient backed by your YubiKey's PIV applet, via [`age-plugin-yubikey`](https://github.com/str4d/age-plugin-yubikey). **Decrypting requires the physical key inserted, your PIV PIN, and a touch.** No custom cryptography is involved — Bubbles shells out to those two audited tools for every encrypt/decrypt.
+
+**Session grants** let the server run unattended for up to 30 days: `vault grant-session` unlocks the vault with your YubiKey once, then re-seals the secrets under a freshly generated random key stored in the macOS Keychain (expiry enforced in code). A running server detects a fresh grant within a minute — no restart needed. When a grant expires, sync locks again until you touch the YubiKey and re-run `grant-session`; **the dashboards keep working from local data throughout.**
+
+## 🚀 Getting started
+
+### Prerequisites
+
+- **Node.js 22+** and npm
+- A **YubiKey** with a free PIV slot (a factory-default key works out of the box)
+- `age` and `age-plugin-yubikey`:
 
 ```bash
 brew install age age-plugin-yubikey
 npm install
 ```
 
-You'll need a YubiKey with a free PIV slot (a factory-default key works out of
-the box — `age-plugin-yubikey --generate` will provision one for you).
+### 1 · Set up the key vault
 
-## One-time setup
-
-1. **Provision the vault** (insert your YubiKey first):
-
-   ```bash
-   npm run vault -- init
-   ```
-
-   This generates a new PIV identity on the key (or pass `--existing-identity`
-   / `--existing-recipient` to reuse one you already provisioned) and creates
-   an empty encrypted secrets file at `data/vault/secrets.age`.
-
-2. **Store your Plaid API keys** (requires touching the YubiKey again — this
-   is the only place Plaid credentials are ever written to disk):
-
-   ```bash
-   npm run vault -- set-plaid-keys --client-id <id> --secret <secret> --env sandbox
-   ```
-
-3. **Build and run:**
-
-   ```bash
-   npm run dev      # ts-node style dev server with reload
-   # or
-   npm run build && npm start
-   ```
-
-   On boot the server first looks for a valid session grant; if there isn't
-   one, it falls back to an interactive YubiKey unlock (touch required) right
-   there in the terminal.
-
-4. **Link a bank (Sandbox).** With the dev server running, open
-   `http://127.0.0.1:4000/link-test.html` — a minimal test harness (not part
-   of the real app) that drives Plaid Link end-to-end: creates a link token,
-   opens Plaid's hosted Link flow, and exchanges the resulting `public_token`
-   through the backend. In Sandbox, use Plaid's test credentials
-   (`user_good` / `pass_good`) to simulate a bank login.
-
-## Running unattended for up to 30 days
+Insert your YubiKey, then provision the vault (this generates a PIV identity on the key and creates the empty encrypted secrets file):
 
 ```bash
-npm run vault -- grant-session --days 30   # requires the YubiKey once
-npm run vault -- status                    # check remaining validity
-npm run vault -- revoke-session            # kill the grant early
+npm run vault -- init
 ```
 
-The service enforces the 30-day cap in code regardless of what's requested.
-When a grant expires, restart the server with the YubiKey present, or run
-`grant-session` again — there is no way to extend a grant without a fresh
-YubiKey touch.
+Store your Plaid API keys — this is the **only** place Plaid credentials are ever written to disk, and it requires a YubiKey touch:
 
-## Docker deployment
+```bash
+npm run vault -- set-plaid-keys --client-id <id> --secret <secret> --env sandbox
+```
 
-This service (and any others added later) deploys via `docker compose`:
+Handy vault commands:
+
+```bash
+npm run vault -- status              # show init + session-grant status
+npm run vault -- grant-session --days 30   # run unattended for up to 30 days (YubiKey touch)
+npm run vault -- revoke-session      # end a grant early
+```
+
+### 2 · Run in development
+
+```bash
+npm run dev          # backend (auto-reload) on http://127.0.0.1:4000
+npm run web:dev      # frontend (Vite) on http://localhost:5173
+```
+
+On boot the server looks for a valid session grant; if there isn't one, it falls back to an interactive YubiKey unlock right there in the terminal.
+
+To link a bank in Plaid **Sandbox**, open `http://127.0.0.1:4000/link-test.html` and use Plaid's test credentials (`user_good` / `pass_good`).
+
+### 3 · Run in production (bare metal)
+
+Build the backend and the web app, then start the compiled server:
+
+```bash
+npm run build        # compile the backend (tsc → dist/)
+npm run web:build    # build the frontend (Vite → public/, served by the backend)
+npm start            # node dist/index.js
+```
+
+The single Node process serves both the API and the built frontend on `http://127.0.0.1:4000`. Make sure a session grant is active (`npm run vault -- grant-session`) so the server can reach Plaid.
+
+## 🐳 Docker deployment
+
+> **Don't have Docker?** Install **[Docker Desktop](https://docs.docker.com/get-docker/)** first (macOS, Windows, or Linux).
+
+Build and start the stack:
 
 ```bash
 docker compose build
 docker compose up -d
 ```
 
-**The vault CLI still runs on the host, never in the container.** Docker
-Desktop can't pass a physical YubiKey's USB/PC-SC access through to a Linux
-container, so the split is:
+The API is published to `127.0.0.1:4000` only (never all interfaces), matching the local-only posture of the bare-metal setup.
 
-- **Host** (bare `npm run vault -- ...`, per the setup steps above): the only
-  place that ever touches the physical key — `init`, `set-plaid-keys`, and
-  `grant-session`/its 30-day refresh all happen here.
-- **Container**: only ever consumes an existing session grant. It has `age`
-  and `age-plugin-yubikey` installed and a `pcscd` daemon running internally
-  (see `docker/entrypoint.sh`), but that's only so the plugin can do
-  recipient-only *encryption* (e.g. re-sealing the vault when a new bank gets
-  linked through the running API) — that's pure public-key wrapping and
-  genuinely doesn't need the physical key present. *Decrypting* the vault
-  always needs the real hardware, so the container boots LOCKED when there's
-  no valid grant (dashboards still work), and unlocks by itself as soon as a
-  grant appears in the shared `./data`. Grants for the container must be
-  issued with `--portable`: the default stores the session key only in the
-  macOS Keychain, which the Linux container cannot read.
+### The host / container split
 
-Both host and container read/write the same `./data` directory — it's a bind
-mount (`./data:/app/data` in `docker-compose.yml`), not a Docker-managed
-volume, specifically so the host-run vault CLI and the containerized server
-see identical files.
+**The vault CLI always runs on the host, never in the container.** Docker can't pass a physical YubiKey's USB/PC-SC access through to a Linux container, so:
 
-Practical loop:
+- **Host** — the only place that ever touches the physical key: `init`, `set-plaid-keys`, and `grant-session` all run here with plain `npm run vault -- …`.
+- **Container** — only ever *consumes* an existing session grant. It boots **locked** when there's no valid grant (dashboards still work from local data) and unlocks itself as soon as a grant appears in the shared `./data`.
+
+Grants for the container **must** be issued with `--portable` — the default stores the session key only in the macOS Keychain, which a Linux container can't read:
 
 ```bash
-npm run vault -- init                                         # host, YubiKey required, once
-npm run vault -- set-plaid-keys --client-id ... --secret ...   # host, YubiKey required
-npm run vault -- grant-session --days 30 --portable            # host, YubiKey required, every ≤30 days
-docker compose up -d                                           # container serves the app; picks grants up live
+# All on the HOST, YubiKey required:
+npm run vault -- init                                       # once
+npm run vault -- set-plaid-keys --client-id … --secret …    # once
+npm run vault -- grant-session --days 30 --portable         # every ≤30 days
+
+docker compose up -d                                        # container serves the app; picks up grants live
 ```
 
-The API is published to `127.0.0.1:4000` only (not all interfaces), matching
-the "local only" posture of the non-Docker setup.
+Both host and container read/write the **same `./data` directory** — it's a bind mount (`./data:/app/data` in `docker-compose.yml`), not a Docker-managed volume, so the host-run vault CLI and the containerized server see identical files.
 
-## API
+## ⚙️ Configuration
 
-All routes except `/healthz` and `/api/vault/status` return `503` if the
-vault isn't unlocked in the running process.
-
-| Method | Path | Description |
-|---|---|---|
-| GET  | `/healthz` | Liveness check |
-| GET  | `/api/vault/status` | Vault init / session-grant status (no secrets) |
-| POST | `/api/link/token` | `{ clientUserId }` → creates a Plaid Link token |
-| POST | `/api/link/exchange` | `{ publicToken }` → exchanges for an access token, stores it in the vault, links the bank, and auto-fetches its accounts (`{ …, accountsFetched }`) |
-| GET  | `/api/items` | List linked banks (metadata only) |
-| DELETE | `/api/items/:itemId` | Unlink a bank (revokes with Plaid, deletes local data) |
-| GET  | `/api/persons` | Household persons (for assigning account ownership in the classify wizard) |
-| GET  | `/api/items/:itemId/accounts` | List that item's accounts with their classification state |
-| POST | `/api/items/:itemId/accounts/refresh` | Re-pull the item's accounts from Plaid (upsert; keeps existing classifications) |
-| PATCH | `/api/accounts/:accountId` | Classify one account: `{ personId?, registeredType?, purpose?, tracked?, isClosed? }` |
-| POST | `/api/items/:itemId/sync` | Incremental transaction sync for one bank (Plaid `/transactions/sync`, cursor-based — only pulls what changed since the last sync) |
-| POST | `/api/sync` | Incremental sync across every linked bank |
-| GET  | `/api/transactions?startDate&endDate&accountId&itemId&limit&offset` | Query locally-synced transactions in a date range |
-| GET  | `/api/balances?itemId` | Cached local balances |
-| POST | `/api/accounts/:itemId/refresh` | Live balance pull from Plaid, refreshes the cache |
-
-### Adding a bank and classifying its accounts
-
-Linking a bank now populates its accounts automatically, so the flow is:
-
-1. `POST /api/link/token` → Plaid Link UI → `POST /api/link/exchange`. The
-   exchange links the bank **and** fetches its accounts in one step (they land
-   `tracked` but *unclassified* — `classifiedAt: null`).
-2. `GET /api/items/:itemId/accounts` to show the user what came back (name,
-   mask, type, balance). `GET /api/persons` gives the owner options.
-3. For each account, `PATCH /api/accounts/:accountId` to record what it is
-   (`personId` — omit/`null` for joint, `registeredType` FHSA/TFSA/RRSP/RESP/
-   NONREG, freeform `purpose`) and whether to keep it in analytics
-   (`tracked: false` keeps it synced/listed but excludes it from every
-   downstream number). This stamps `classifiedAt`, which onboarding gates on.
-
-Accounts exist before you sync, so `POST /api/items/:itemId/sync` no longer
-depends on a manual balance refresh first.
-
-An account's classification (`personId`, `registeredType`, `purpose`,
-`tracked`, `isClosed`) is never overwritten by a later balance refresh or
-account re-fetch — only Plaid-owned balance/metadata fields update.
-
-### Transaction shape
-
-Each transaction returned by `/api/transactions` includes at minimum:
-
-```jsonc
-{
-  "transactionId": "...",
-  "accountId": "...",
-  "amount": 42.10,
-  "currency": "USD",
-  "date": "2026-06-30",
-  "type": "in store",       // Plaid payment_channel: online / in store / other
-  "paidTo": "Whole Foods",  // merchant_name, falling back to the raw description
-  "category": { "primary": "FOOD_AND_DRINK", "detailed": "FOOD_AND_DRINK_GROCERIES" },
-  "pending": false
-}
-```
-
-## Configuration
-
-Copy `.env.example` to `.env` for local overrides (port, host, Plaid
-products/country codes). None of these values are secret — only `PORT`,
-`HOST`, and similar runtime knobs. Load it however you like, e.g.:
+Copy `.env.example` to `.env` for local overrides (port, host, Plaid products/country codes, optional Gemini key). **None of these values are secret** — the actual Plaid credentials live only in the YubiKey vault.
 
 ```bash
 set -a; source .env; set +a; npm run dev
 ```
 
-## Data storage
+## 💾 Data & privacy
 
-Everything lives under `./data` (gitignored): the SQLite DB
-(`finances.db`), the encrypted vault, and session-grant material. Nothing is
-sent anywhere except to Plaid's API itself.
+Everything lives under `./data` (gitignored): the SQLite database (`finances.db`), the encrypted vault, and session-grant material. Nothing is sent anywhere except to Plaid's API. SQLite runs in WAL mode, so a clean shutdown always leaves a consistent database on disk, and the bind-mounted `./data` survives container restarts and recreates.
 
-`./data` is a real directory on disk, not an ephemeral container filesystem —
-under Docker Compose it's bind-mounted (`./data:/app/data`), so the database
-and vault survive container restarts/recreates. SQLite runs in WAL mode, so a
-clean shutdown (or the next open, which replays the WAL) always leaves a
-consistent database on disk.
+## 💬 Status & feedback
+
+Bubbles is an evolving work in progress and a personal project — expect frequent changes and the occasional rough edge. **All feedback is appreciated**: [open an issue](../../issues) with bugs, ideas, or questions.
+
+<div align="center"><sub>Made with 🫧 by Nicholas Massad</sub></div>
