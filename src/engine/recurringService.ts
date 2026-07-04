@@ -255,8 +255,25 @@ export interface RegistryItem extends RecurringPaymentRow {
   priceHistory: { date: string; amount: number }[];
 }
 
-export function getRegistry(status?: RecurringPaymentRow["status"]): RegistryItem[] {
-  return listRecurring(status).map((rp) => ({ ...rp, priceHistory: amountHistory(rp.rp_id) }));
+/**
+ * The next due date on/after `today`, rolled forward from the anchor by the
+ * cadence. The stored `next_due_date` is only the matcher's baseline (one
+ * cycle past the last seen charge) and goes stale between charges — this is
+ * what the UI should show so a due date never appears already in the past.
+ */
+function liveNextDue(rp: RecurringPaymentRow, today: string): string {
+  return (
+    nextOccurrence(rp.frequency, rp.anchor_date, addDays(today, -1), rp.end_date, rp.interval_days) ??
+    rp.next_due_date
+  );
+}
+
+export function getRegistry(status: RecurringPaymentRow["status"] | undefined, today: string): RegistryItem[] {
+  return listRecurring(status).map((rp) => ({
+    ...rp,
+    next_due_date: liveNextDue(rp, today),
+    priceHistory: amountHistory(rp.rp_id),
+  }));
 }
 
 export interface RecurringInput {

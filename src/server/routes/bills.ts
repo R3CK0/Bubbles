@@ -30,7 +30,8 @@ const statusQuery = z.object({
 
 billsRouter.get("/api/bills/registry", (req, res) => {
   const { status } = statusQuery.parse(req.query);
-  res.json({ registry: getRegistry(status) });
+  const today = new Date().toISOString().slice(0, 10);
+  res.json({ registry: getRegistry(status, today) });
 });
 
 billsRouter.post("/api/bills", (req, res) => {
