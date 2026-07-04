@@ -1,32 +1,117 @@
 import { useMemo, useRef, useState } from "react";
 import { useAction, useApi, useCtx, usePersons } from "../api/hooks";
 import { api } from "../api/client";
-import type { Goal, GoalsView, PlanRow, PlanLine, Scenario, SolveResult } from "../api/types";
+import type { Goal, GoalCategory, GoalOptions, GoalsView, PlanRow, PlanLine, Scenario, SolveResult } from "../api/types";
 import { Card, EmptyState, Feasibility, Field, Modal, Ring } from "../components/ui";
 import { Tip } from "../components/Tip";
 import { fmt, monthLabel } from "../lib/format";
 
-const GOAL_TYPES = ["house", "kid", "trip", "purchase", "savings", "event", "emergency_fund", "debt_payoff"] as const;
+interface GoalDraft {
+  name: string;
+  category: GoalCategory;
+  goalType: Goal["goal_type"];
+  targetAmount: number;
+  targetDate: string | null;
+  priority: number;
+  personId: string | null;
+  linkedAccountId: string | null;
+  linkedDebtId: string | null;
+}
 
-interface GoalDraft { name: string; goalType: (typeof GOAL_TYPES)[number]; targetAmount: number; targetDate: string | null; priority: number; personId: string | null }
+const CATEGORIES: { key: GoalCategory; label: string; blurb: string }[] = [
+  { key: "saving", label: "Saving", blurb: "Track an account's balance until it reaches a target." },
+  { key: "spending", label: "Spending", blurb: "A budget of its own for a big one-off — tag transactions to it and they skip the monthly budget." },
+  { key: "loan", label: "Loan payoff", blurb: "Bring a loan's balance down to a target by a date." },
+];
+
+/** Thematic flavors within each category (drives labels and event math). */
+const SUBTYPES: Record<GoalCategory, Goal["goal_type"][]> = {
+  saving: ["savings", "emergency_fund", "house", "kid"],
+  spending: ["trip", "purchase", "event"],
+  loan: ["debt_payoff"],
+};
 
 /** Shared create-goal form (also used by onboarding). */
 export function GoalForm({ onSubmit, submitLabel }: { onSubmit: (d: GoalDraft) => void; submitLabel: string }) {
   const persons = usePersons();
-  const [d, setD] = useState<GoalDraft>({ name: "", goalType: "savings", targetAmount: 0, targetDate: null, priority: 3, personId: null });
+  const options = useApi<GoalOptions>(["goals.options"], "/api/goals/options");
+  const [d, setD] = useState<GoalDraft>({
+    name: "", category: "saving", goalType: "savings", targetAmount: 0, targetDate: null,
+    priority: 3, personId: null, linkedAccountId: null, linkedDebtId: null,
+  });
+
+  const setCategory = (category: GoalCategory) =>
+    setD({ ...d, category, goalType: SUBTYPES[category][0], linkedAccountId: null, linkedDebtId: null });
+
+  const accounts = options.data?.accounts ?? [];
+  const debts = options.data?.debts ?? [];
+  const loanBalance =
+    d.category === "loan"
+      ? debts.find((x) => x.debtId === d.linkedDebtId)?.currentBalance ??
+        accounts.find((x) => x.accountId === d.linkedAccountId)?.currentBalance ??
+        null
+      : null;
+
+  const invalid =
+    !d.name ||
+    (d.category === "saving" && (!d.linkedAccountId || d.targetAmount <= 0)) ||
+    (d.category === "spending" && d.targetAmount <= 0) ||
+    (d.category === "loan" && ((!d.linkedAccountId && !d.linkedDebtId) || !d.targetDate || d.targetAmount < 0));
+
   return (
     <div className="col" style={{ gap: 13 }}>
-      <Field label="Name"><input className="input" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder="e.g. House down payment" /></Field>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Type">
-          <select className="input" value={d.goalType} onChange={(e) => setD({ ...d, goalType: e.target.value as GoalDraft["goalType"] })}>
-            {GOAL_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+      <Field label="What kind of goal?">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          {CATEGORIES.map((c) => (
+            <div key={c.key} className="panel" onClick={() => setCategory(c.key)}
+              style={{ padding: "10px 12px", cursor: "pointer", outline: d.category === c.key ? "1.5px solid var(--accent)" : "none" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{c.label}</div>
+              <div className="muted" style={{ fontSize: 11, lineHeight: 1.4, marginTop: 3 }}>{c.blurb}</div>
+            </div>
+          ))}
+        </div>
+      </Field>
+      <Field label="Name"><input className="input" value={d.name} onChange={(e) => setD({ ...d, name: e.target.value })} placeholder={d.category === "loan" ? "e.g. Kill the line of credit" : d.category === "spending" ? "e.g. Japan trip" : "e.g. House down payment"} /></Field>
+
+      {d.category === "saving" && (
+        <Field label="Account to track">
+          <select className="input" value={d.linkedAccountId ?? ""} onChange={(e) => setD({ ...d, linkedAccountId: e.target.value || null })}>
+            <option value="">— pick an account —</option>
+            {accounts.map((a) => <option key={a.accountId} value={a.accountId}>{a.name}{a.currentBalance != null ? ` (${fmt(a.currentBalance)})` : ""}</option>)}
           </select>
         </Field>
-        <Field label="Target amount"><input className="input num" type="number" min={0} value={d.targetAmount || ""} onChange={(e) => setD({ ...d, targetAmount: Number(e.target.value) })} /></Field>
+      )}
+      {d.category === "loan" && (
+        <Field label="Loan to track">
+          <select className="input" value={d.linkedDebtId ? `debt|${d.linkedDebtId}` : d.linkedAccountId ? `acct|${d.linkedAccountId}` : ""}
+            onChange={(e) => {
+              const [kind, id] = e.target.value.split("|");
+              setD({ ...d, linkedDebtId: kind === "debt" ? id : null, linkedAccountId: kind === "acct" ? id : null });
+            }}>
+            <option value="">— pick a debt or account —</option>
+            {debts.map((x) => <option key={x.debtId} value={`debt|${x.debtId}`}>{x.name} ({fmt(x.currentBalance)})</option>)}
+            {accounts.filter((a) => a.type === "credit" || a.type === "loan").map((a) => <option key={a.accountId} value={`acct|${a.accountId}`}>{a.name}{a.currentBalance != null ? ` (${fmt(a.currentBalance)})` : ""}</option>)}
+          </select>
+        </Field>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        {d.category !== "loan" && (
+          <Field label="Type">
+            <select className="input" value={d.goalType} onChange={(e) => setD({ ...d, goalType: e.target.value as Goal["goal_type"] })}>
+              {SUBTYPES[d.category].map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label={d.category === "loan" ? "Reduce balance to" : d.category === "spending" ? "Budget for it" : "Target amount"}>
+          <input className="input num" type="number" min={0} value={d.category === "loan" ? d.targetAmount : d.targetAmount || ""} onChange={(e) => setD({ ...d, targetAmount: Number(e.target.value) })} />
+        </Field>
+        {d.category === "loan" && loanBalance != null && (
+          <Field label="Balance today"><div className="input num" style={{ display: "flex", alignItems: "center", opacity: 0.7 }}>{fmt(loanBalance)}</div></Field>
+        )}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Field label="Target date"><input className="input" type="date" value={d.targetDate ?? ""} onChange={(e) => setD({ ...d, targetDate: e.target.value || null })} /></Field>
+        <Field label={d.category === "loan" ? "Pay down by" : "Target date"}><input className="input" type="date" value={d.targetDate ?? ""} onChange={(e) => setD({ ...d, targetDate: e.target.value || null })} /></Field>
         <Field label="Priority (1 = highest)"><input className="input num" type="number" min={1} max={5} value={d.priority} onChange={(e) => setD({ ...d, priority: Number(e.target.value) })} /></Field>
         <Field label="Whose?">
           <select className="input" value={d.personId ?? ""} onChange={(e) => setD({ ...d, personId: e.target.value || null })}>
@@ -35,10 +120,22 @@ export function GoalForm({ onSubmit, submitLabel }: { onSubmit: (d: GoalDraft) =
           </select>
         </Field>
       </div>
-      <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
-        The target doubles as the goal's own budget: transactions you tag to this goal (from the Budget inbox) are excluded from the monthly household budget and tracked here instead.
-      </div>
-      <button className="btn" disabled={!d.name || !d.targetAmount} onClick={() => onSubmit(d)}>{submitLabel}</button>
+      {d.category === "spending" && (
+        <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+          The amount is this goal's own budget: transactions you tag to it (from the Budget inbox) are excluded from the monthly household budget and count here instead.
+        </div>
+      )}
+      {d.category === "saving" && (
+        <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+          Progress follows the linked account's balance — no manual updates needed.
+        </div>
+      )}
+      {d.category === "loan" && (
+        <div className="muted" style={{ fontSize: 11.5, lineHeight: 1.5 }}>
+          Progress is measured from today's balance down to the target — it advances as the balance drops. Use 0 to pay it off entirely.
+        </div>
+      )}
+      <button className="btn" disabled={invalid} onClick={() => onSubmit(d)}>{submitLabel}</button>
     </div>
   );
 }
@@ -205,8 +302,16 @@ export function Goals() {
               <div className="row" style={{ gap: 14 }}>
                 <Ring pct={g.progress} color={color} size={64} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>{g.name}</div>
-                  <div className="muted num" style={{ fontSize: 12, marginTop: 3 }}>{fmt(g.funded_amount)} of {fmt(g.target_amount)}</div>
+                  <div className="row" style={{ gap: 6 }}>
+                    <span style={{ fontSize: 14, fontWeight: 600 }}>{g.name}</span>
+                    <span className="chip" style={{ fontSize: 10 }}>{g.category === "loan" ? "loan payoff" : g.category}</span>
+                  </div>
+                  <div className="muted num" style={{ fontSize: 12, marginTop: 3 }}>
+                    {g.category === "spending" ? "spent " : g.category === "loan" ? "paid down " : ""}{fmt(g.funded_amount)} of {fmt(g.target_amount)}
+                  </div>
+                  {g.category === "loan" && g.currentBalance !== null && (
+                    <div className="muted num" style={{ fontSize: 11.5, marginTop: 2 }}>balance {fmt(g.currentBalance)} → {fmt(g.targetBalance ?? 0)}</div>
+                  )}
                   {g.target_date && <div className="muted" style={{ fontSize: 11.5, marginTop: 2 }}>by {monthLabel(g.target_date.slice(0, 7))}</div>}
                   {g.requiredMonthly !== null && <div className="num" style={{ fontSize: 12, marginTop: 4, color, fontWeight: 600 }}>{fmt(g.requiredMonthly)}/mo needed</div>}
                 </div>
@@ -272,9 +377,15 @@ export function Goals() {
             <div className="row" style={{ gap: 16 }}>
               <Ring pct={detailGoal.progress} size={80} />
               <div className="col" style={{ gap: 4, fontSize: 13 }}>
-                <div><span className="muted">Funded</span> <b className="num">{fmt(detailGoal.funded_amount)}</b> <span className="muted">of</span> <b className="num">{fmt(detailGoal.target_amount)}</b></div>
+                <div>
+                  <span className="muted">{detailGoal.category === "spending" ? "Spent" : detailGoal.category === "loan" ? "Paid down" : "Funded"}</span>{" "}
+                  <b className="num">{fmt(detailGoal.funded_amount)}</b> <span className="muted">of</span> <b className="num">{fmt(detailGoal.target_amount)}</b>
+                </div>
+                {detailGoal.category === "loan" && detailGoal.currentBalance !== null && (
+                  <div><span className="muted">Balance</span> <b className="num">{fmt(detailGoal.currentBalance)}</b> <span className="muted">→ reduce to</span> <b className="num">{fmt(detailGoal.targetBalance ?? 0)}</b></div>
+                )}
                 {detailGoal.target_date && <div><span className="muted">Target</span> <b>{monthLabel(detailGoal.target_date.slice(0, 7))}</b></div>}
-                <div><span className="muted">Priority</span> <b>{detailGoal.priority}</b> · <span className="muted">type</span> <b>{detailGoal.goal_type.replace(/_/g, " ")}</b></div>
+                <div><span className="muted">Priority</span> <b>{detailGoal.priority}</b> · <span className="muted">type</span> <b>{detailGoal.category === "loan" ? "loan payoff" : detailGoal.goal_type.replace(/_/g, " ")}</b></div>
                 {detailGoal.taggedSpend.total > 0 && (
                   <div>
                     <span className="muted">Spent against this goal</span>{" "}

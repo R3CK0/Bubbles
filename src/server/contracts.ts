@@ -47,6 +47,15 @@ export const budgetUpdateSchema = z
   .strict();
 export type BudgetUpdateBody = z.infer<typeof budgetUpdateSchema>;
 
+/** Clear the whole budget from a month onward (new empty version). */
+export const budgetResetSchema = z
+  .object({
+    effectiveFrom: z.string().regex(/^\d{4}-\d{2}$/),
+    name: z.string().min(1).optional(),
+  })
+  .strict();
+export type BudgetResetBody = z.infer<typeof budgetResetSchema>;
+
 // ---- Categories & rules ----
 export type CategoriesResponse = { categories: CategoryRow[] };
 
@@ -90,6 +99,16 @@ export const categorizeSchema = z
   .object({ categoryId: z.string().min(1).nullable() })
   .strict();
 export type CategorizeBody = z.infer<typeof categorizeSchema>;
+
+/** Inbox → flag a charge as a recurring expense; it confirms itself when the
+ *  next matching charge arrives. */
+export const recurringFlagSchema = z
+  .object({
+    frequency: z.enum(["weekly", "biweekly", "monthly", "quarterly", "semiannual", "annual"]),
+    name: z.string().min(1).optional(),
+  })
+  .strict();
+export type RecurringFlagBody = z.infer<typeof recurringFlagSchema>;
 
 /** Budget-exclusion flags: expense-report reimbursements and goal spending. */
 export const transactionFlagsSchema = z
@@ -205,9 +224,11 @@ export const allocationTargetsSchema = z.record(z.string(), z.number().min(0).ma
 export const goalCreateSchema = z
   .object({
     goalType: z.enum(["house", "kid", "trip", "purchase", "savings", "event", "emergency_fund", "debt_payoff"]),
+    category: z.enum(["saving", "spending", "loan"]),
     name: z.string().min(1),
     personId: z.string().min(1).nullable().optional(),
-    targetAmount: z.number().positive(),
+    // For loan goals this is the balance to reduce TO, so 0 (paid off) is valid.
+    targetAmount: z.number().min(0),
     targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
     priority: z.number().int().min(1).max(5).optional(),
     linkedAccountId: z.string().min(1).nullable().optional(),
@@ -216,7 +237,21 @@ export const goalCreateSchema = z
     params: z.unknown().optional(),
     notes: z.string().nullable().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((g, ctx) => {
+    if (g.category === "saving" && !g.linkedAccountId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["linkedAccountId"], message: "a saving goal tracks an account — pick one" });
+    }
+    if (g.category === "loan" && !g.linkedAccountId && !g.linkedDebtId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["linkedDebtId"], message: "a loan goal tracks a debt or account — pick one" });
+    }
+    if (g.category === "loan" && !g.targetDate) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["targetDate"], message: "a loan goal needs a payoff date" });
+    }
+    if (g.category !== "loan" && g.targetAmount <= 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["targetAmount"], message: "target amount must be positive" });
+    }
+  });
 
 export const goalPatchSchema = z
   .object({

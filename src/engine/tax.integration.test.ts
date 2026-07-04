@@ -113,7 +113,7 @@ describe("tax pipeline", () => {
   });
 
   it("optimizer deploys into remaining room and accept writes an active plan", () => {
-    createGoal({ goalType: "house", name: "House", targetAmount: 80_000, priority: 2 });
+    createGoal({ goalType: "house", category: "saving", name: "House", targetAmount: 80_000, priority: 2 });
     const result = runOptimizer(ctx(), 12_000, 2026);
     expect(result.totalDeployed).toBe(12_000);
     const nick = result.allocations.find((a) => a.personId === "nick")!;

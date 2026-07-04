@@ -9,19 +9,26 @@ import {
   getBudgetVersions,
   getBudgetView,
   getVarianceNarratives,
+  resetBudget,
   updateBudgetLines,
 } from "../../engine/budgetService.js";
 import {
   categorizeManually,
   deleteRule,
   getInbox,
+  listTransactions,
+  markTransferPending,
   saveRule,
+  unmarkTransfer,
 } from "../../engine/categorizationService.js";
+import { flagRecurringFromTransaction } from "../../engine/recurringService.js";
 import { listCategories, listRules, setTransactionFlags, upsertCategory } from "../../db/repositories/budgeting.js";
 import {
+  budgetResetSchema,
   budgetUpdateSchema,
   categorizeSchema,
   categorySchema,
+  recurringFlagSchema,
   ruleSchema,
   transactionFlagsSchema,
 } from "../contracts.js";
@@ -45,6 +52,12 @@ budgetRouter.put("/api/budget/lines", (req, res) => {
     body.name,
   );
   res.json({ version });
+});
+
+/** Clear the budget from a month onward — a fresh, empty version. */
+budgetRouter.post("/api/budget/reset", (req, res) => {
+  const body = budgetResetSchema.parse(req.body);
+  res.json({ version: resetBudget(body.effectiveFrom, body.name) });
 });
 
 budgetRouter.get("/api/budget/versions", (_req, res) => {
@@ -95,6 +108,32 @@ budgetRouter.get("/api/categories/inbox", (req, res) => {
   res.json(getInbox(limit));
 });
 
+const txListQuery = z.object({
+  search: z.string().optional(),
+  category: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+/** The Transactions page: every row for the viewed month, DB-only (the
+ *  vault-guarded /api/transactions is the Plaid tier's raw query). */
+budgetRouter.get("/api/transactions/all", (req, res) => {
+  const q = txListQuery.parse({
+    search: req.query.search,
+    category: req.query.category,
+    limit: req.query.limit,
+    offset: req.query.offset,
+  });
+  res.json(
+    listTransactions(buildContext(req.query), {
+      search: q.search,
+      categoryId: q.category,
+      limit: q.limit,
+      offset: q.offset,
+    }),
+  );
+});
+
 budgetRouter.post("/api/transactions/:transactionId/categorize", (req, res) => {
   const body = categorizeSchema.parse(req.body);
   const changed = categorizeManually(requireParam(req, "transactionId"), body.categoryId);
@@ -107,4 +146,33 @@ budgetRouter.patch("/api/transactions/:transactionId/flags", (req, res) => {
   const body = transactionFlagsSchema.parse(req.body);
   const changed = setTransactionFlags(requireParam(req, "transactionId"), body);
   res.json({ changed });
+});
+
+/** Preemptively mark one leg as a transfer to another account. It leaves the
+ *  budget immediately (pending) and validates when the counterpart appears
+ *  within the 8-day window. */
+budgetRouter.post("/api/transactions/:transactionId/transfer", (req, res) => {
+  const result = markTransferPending(requireParam(req, "transactionId"));
+  if (!result.marked) {
+    res.status(404).json({ error: "transaction not found" });
+    return;
+  }
+  res.json(result);
+});
+
+budgetRouter.delete("/api/transactions/:transactionId/transfer", (req, res) => {
+  res.json({ cleared: unmarkTransfer(requireParam(req, "transactionId")) });
+});
+
+/** Flag a charge as a recurring expense: lands in the bills registry as
+ *  pending, auto-confirms when the next matching charge arrives. */
+budgetRouter.post("/api/transactions/:transactionId/recurring", (req, res) => {
+  const body = recurringFlagSchema.parse(req.body);
+  const today = new Date().toISOString().slice(0, 10);
+  const result = flagRecurringFromTransaction(requireParam(req, "transactionId"), body, today);
+  if (!result) {
+    res.status(404).json({ error: "transaction not found" });
+    return;
+  }
+  res.status(201).json(result);
 });

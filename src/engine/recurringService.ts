@@ -36,6 +36,7 @@ import {
 import {
   activeBudgetForMonth,
   flowsForRange,
+  getFlowTx,
   listCategories,
   listRules,
   retargetRule,
@@ -54,12 +55,17 @@ export function runDetection(today: string): { candidates: number; proposed: num
   return { candidates: candidates.length, proposed };
 }
 
-/** Nightly: link fresh charges to registry entries, advance due dates, flag creep. */
+/** Nightly: link fresh charges to registry entries, advance due dates, flag creep.
+ *  Bills flagged from the inbox (proposed + manual) are matched too — their
+ *  first returning charge confirms them into the active registry. */
 export function matchNewTransactions(range: { start: string; end: string }, now: string): {
   matched: number;
   creepAlerts: number;
+  confirmed: number;
 } {
-  const registry = listRecurring("active");
+  const awaiting = listRecurring("proposed").filter((r) => r.source === "manual");
+  const awaitingIds = new Set(awaiting.map((r) => r.rp_id));
+  const registry = [...listRecurring("active"), ...awaiting];
   const reimbursedByRp = new Map(registry.map((r) => [r.rp_id, r.reimbursed_by]));
   const entries = registry.map(toRecurringEntry);
   const ids = new Set(unlinkedChargeIds(range));
@@ -67,6 +73,7 @@ export function matchNewTransactions(range: { start: string; end: string }, now:
 
   let matched = 0;
   let creepAlerts = 0;
+  let confirmed = 0;
   for (const tx of flows) {
     const entry = matchTransaction(tx, entries);
     if (!entry) continue;
@@ -77,6 +84,24 @@ export function matchNewTransactions(range: { start: string; end: string }, now:
     advanceNextDue(entry.rpId, next);
     entry.nextDueDate = next;
     matched++;
+
+    if (awaitingIds.has(entry.rpId)) {
+      // the expense came back — the flagged bill is confirmed
+      setRecurringStatus(entry.rpId, "active");
+      awaitingIds.delete(entry.rpId);
+      confirmed++;
+      createAlert(
+        {
+          alert_type: "recurring_confirmed",
+          severity: "info",
+          title: `${entry.name} confirmed as recurring`,
+          body: `The charge came back ($${tx.amount.toFixed(2)} on ${tx.date}), so the bill you flagged is now tracked in the registry.`,
+          payload: { rpId: entry.rpId },
+        },
+        now,
+      );
+      continue; // the confirming charge set the baseline — no creep check
+    }
 
     const creep = priceCreep(tx.amount, entry);
     if (creep) {
@@ -93,7 +118,72 @@ export function matchNewTransactions(range: { start: string; end: string }, now:
       if (created) creepAlerts++;
     }
   }
-  return { matched, creepAlerts };
+  return { matched, creepAlerts, confirmed };
+}
+
+export interface RecurringFlagResult {
+  recurring: RecurringPaymentRow;
+  /** true = a registry entry for this merchant already existed; the charge was linked to it instead. */
+  alreadyTracked: boolean;
+}
+
+/**
+ * Inbox "this is recurring": seed a registry entry from one charge. It lands
+ * as a pending bill (status 'proposed', source 'manual') that confirms itself
+ * to active when the next matching charge arrives — auto-detection keeps
+ * running independently for everything the user doesn't flag.
+ */
+export function flagRecurringFromTransaction(
+  transactionId: string,
+  input: { frequency: RecurringPaymentRow["frequency"]; name?: string },
+  today: string,
+): RecurringFlagResult | null {
+  const tx = getFlowTx(transactionId);
+  if (!tx) return null;
+  if (tx.amount <= 0) {
+    throw Object.assign(new Error("only expenses (money out) can be flagged as recurring"), { status: 400 });
+  }
+  if (tx.isTransfer) {
+    throw Object.assign(new Error("a transfer between your own accounts can't be a recurring expense"), { status: 400 });
+  }
+
+  const name = input.name?.trim() || tx.merchantName || tx.payee || "Recurring charge";
+  const normalized = normalizeMerchant(name);
+  const existing = listRecurring().find((r) => {
+    const rName = normalizeMerchant(r.name);
+    return !!rName && !!normalized && (rName.includes(normalized) || normalized.includes(rName));
+  });
+  if (existing) {
+    linkTransaction(transactionId, existing.rp_id, existing.reimbursed_by);
+    return { recurring: existing, alreadyTracked: true };
+  }
+
+  const row: RecurringPaymentRow = {
+    rp_id: randomUUID(),
+    name,
+    category_id: tx.categoryId,
+    person_id: tx.personId,
+    account_id: tx.accountId,
+    expected_amount: roundCents(tx.amount),
+    amount_tolerance: 0.05,
+    currency: tx.currency ?? "CAD",
+    frequency: input.frequency,
+    interval_days: null,
+    anchor_date: tx.date,
+    // the next cycle from this charge — the matcher's ±7-day window around
+    // this date is what validates the flag when the expense comes back
+    next_due_date: nextOccurrence(input.frequency, tx.date, tx.date) ?? tx.date,
+    end_date: null,
+    autopay: 1,
+    reimbursed_by: null,
+    debt_id: null,
+    source: "manual",
+    status: "proposed",
+    created_at: new Date(`${today}T00:00:00Z`).toISOString(),
+  };
+  upsertRecurring(row);
+  linkTransaction(transactionId, row.rp_id);
+  return { recurring: row, alreadyTracked: false };
 }
 
 export interface BillsCalendar {
@@ -165,8 +255,25 @@ export interface RegistryItem extends RecurringPaymentRow {
   priceHistory: { date: string; amount: number }[];
 }
 
-export function getRegistry(status?: RecurringPaymentRow["status"]): RegistryItem[] {
-  return listRecurring(status).map((rp) => ({ ...rp, priceHistory: amountHistory(rp.rp_id) }));
+/**
+ * The next due date on/after `today`, rolled forward from the anchor by the
+ * cadence. The stored `next_due_date` is only the matcher's baseline (one
+ * cycle past the last seen charge) and goes stale between charges — this is
+ * what the UI should show so a due date never appears already in the past.
+ */
+function liveNextDue(rp: RecurringPaymentRow, today: string): string {
+  return (
+    nextOccurrence(rp.frequency, rp.anchor_date, addDays(today, -1), rp.end_date, rp.interval_days) ??
+    rp.next_due_date
+  );
+}
+
+export function getRegistry(status: RecurringPaymentRow["status"] | undefined, today: string): RegistryItem[] {
+  return listRecurring(status).map((rp) => ({
+    ...rp,
+    next_due_date: liveNextDue(rp, today),
+    priceHistory: amountHistory(rp.rp_id),
+  }));
 }
 
 export interface RecurringInput {

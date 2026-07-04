@@ -40,10 +40,18 @@ export function getSankey(ctx: EngineContext): SankeyGraph {
   return buildSankey(txs, categories, ctx.personNames, ctx.lens, ctx.range);
 }
 
+/**
+ * Flux window centered on the viewed month: 6 months back, the month itself,
+ * 5 months ahead (12 columns). Future months come back with no cells — the
+ * grid shows them empty so the eye keeps its bearings around "now".
+ */
 export function getFluxMatrix(ctx: EngineContext, monthCount = 12): FluxMatrixResult {
-  const months = monthsBetween(addMonths(ctx.month, -(monthCount - 1)), ctx.month);
+  const back = Math.floor(monthCount / 2);
+  const ahead = monthCount - back - 1;
+  const months = monthsBetween(addMonths(ctx.month, -back), addMonths(ctx.month, ahead));
   const first = months[0]!;
-  const txs = flowsForRange({ start: `${first}-01`, end: ctx.range.end });
+  const last = months[months.length - 1]!;
+  const txs = flowsForRange({ start: `${first}-01`, end: `${last}-31` });
   const categories = listCategories().map(toCategoryNode);
   return fluxMatrix(txs, categories, months, ctx.lens);
 }

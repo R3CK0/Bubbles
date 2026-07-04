@@ -117,7 +117,8 @@ function catalog(): string {
     }
   }
   lines.push("", "ACTIVE GOALS (goal_id — name, with subcategories as line_id — name):");
-  for (const g of listGoals("active")) {
+  // Only spending goals accept tagged transactions; saving/loan goals track balances.
+  for (const g of listGoals("active").filter((g) => g.category === "spending")) {
     lines.push(`- ${g.goal_id} — ${g.name} (${g.goal_type.replace(/_/g, " ")})`);
     for (const li of listLineItems(g.goal_id)) {
       if (li.status !== "cancelled") lines.push(`  - ${li.line_id} — ${li.name}`);
@@ -138,7 +139,8 @@ Ground rules:
 2. Your suggestion, once accepted by the user, becomes a LOCKED mapping applied automatically to every future transaction from this merchant. So only be confident when the merchant→target relationship is stable over time (a grocery store is always groceries).
 3. CRITICAL EXCEPTION — airlines and travel-booking platforms (Air Canada, WestJet, Air Transat, Porter, United, and any airline; Expedia, Booking.com, Hotels.com, Airbnb, VRBO, Trip.com, Priceline, hotel chains, and any hotel/travel booking company): the same merchant can serve ANY trip goal or ordinary travel, so a permanent mapping is wrong by construction. For these, set alwaysAsk=true — the app will ask the user where to put it EVERY time and will refuse to lock the mapping. Still propose your best one-time guess for THIS transaction (e.g. an Air Canada charge while a "Japan trip" goal is active is probably its Tickets line item).
 4. If a transaction obviously fits a top-level category but none of its subcategories, and an evident subcategory is missing (e.g. "Promutuel" fits Insurance but there is no "Home insurance"), fill newSubcategoryName + newSubcategoryParentId so the app can offer to create it. Otherwise leave both null.
-5. reason must be one short, plain sentence the user reads on a card.
+5. Deposits (direction "money in") that are earnings — payroll, rent collected, interest, dividends — belong in an [income]-kind category. A deposit that reverses a purchase (refund) belongs in the expense category of the original purchase instead.
+6. reason must be one short, plain sentence the user reads on a card.
 
 ${catalog()}`;
 }
@@ -292,7 +294,7 @@ export async function reviewNext(transactionId?: string): Promise<AiReviewCard |
       transactionId: tx.transactionId,
       date: tx.date,
       merchant: tx.merchantName ?? tx.payee,
-      amount: Math.abs(signedFlow(tx)),
+      amount: signedFlow(tx), // positive = money in, matching the inbox card
       plaidPrimary: tx.plaidPrimary,
       plaidDetailed: tx.plaidDetailed,
     },

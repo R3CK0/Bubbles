@@ -5,6 +5,8 @@ import {
   addMonths,
   compareStrategies,
   effectiveMinPayment,
+  monthOf,
+  monthsBetween,
   payoffPlan,
   projectRevolvingInterest,
   repaymentSchedule,
@@ -28,7 +30,7 @@ import {
   type DebtRow,
   type DebtStatementRow,
 } from "../db/repositories/debts.js";
-import { transferLegsForRange } from "../db/repositories/budgeting.js";
+import { flowsForRange, transferLegsForRange } from "../db/repositories/budgeting.js";
 import { listRecurring } from "../db/repositories/recurring.js";
 import { inLens } from "../analytics/cashflow.js";
 
@@ -60,10 +62,14 @@ export function getDebtOverview(ctx: EngineContext): DebtOverview {
   };
 }
 
-/** Budget defaults to Σ minimums + extra; the plan starts at the viewed month. */
+/**
+ * Budget defaults to Σ minimums + extra; the plan starts at the viewed month.
+ * Long-term (installment) debts only — revolving credit turns over monthly
+ * and lives on the short-term screen, so it would only distort the mountain.
+ */
 export function getPayoffPlan(ctx: EngineContext, strategy: PayoffStrategy, extraMonthly: number): PayoffPlan {
   const inputs = listDebts("active")
-    .filter((d) => inLens(d.person_id, ctx.lens))
+    .filter((d) => !SHORT_TERM_KINDS.has(d.kind) && inLens(d.person_id, ctx.lens))
     .map(toDebtInput);
   const budget = roundCents(inputs.reduce((s, d) => s + effectiveMinPayment({ ...d, minPayment: d.minPayment }), 0) + extraMonthly);
   return payoffPlan(inputs, budget, strategy, ctx.month);
@@ -71,7 +77,7 @@ export function getPayoffPlan(ctx: EngineContext, strategy: PayoffStrategy, extr
 
 export function getStrategyComparison(ctx: EngineContext, extraMonthly: number): StrategyComparison {
   const inputs = listDebts("active")
-    .filter((d) => inLens(d.person_id, ctx.lens))
+    .filter((d) => !SHORT_TERM_KINDS.has(d.kind) && inLens(d.person_id, ctx.lens))
     .map(toDebtInput);
   const budget = roundCents(inputs.reduce((s, d) => s + effectiveMinPayment(d), 0) + extraMonthly);
   return compareStrategies(inputs, budget, ctx.month);
@@ -192,6 +198,71 @@ export function getShortTermDebtView(ctx: EngineContext): ShortTermDebtView {
     totalPaidThisMonth: roundCents(items.reduce((s, d) => s + d.paidThisMonth, 0)),
     totalProjectedInterest: roundCents(items.reduce((s, d) => s + d.projectedInterest, 0)),
     missingDueDates: items.filter((d) => d.needsDueDate).length,
+  };
+}
+
+// ---- short-term history: spend vs payments vs interest, by month ----
+
+export interface ShortTermMonth {
+  month: string;
+  /** New purchases charged to the cards/lines this month. */
+  spend: number;
+  /** Transfers that landed on the cards (payments made). */
+  payments: number;
+  /** Interest actually charged (Plaid interest-charge rows on the accounts). */
+  interest: number;
+}
+
+export interface ShortTermHistory {
+  months: ShortTermMonth[];
+}
+
+const INTEREST_RE = /INTEREST/i;
+
+/**
+ * Monthly history for the short-term debt bar chart: what went on the cards,
+ * what was paid onto them, and what interest they charged, per month. Only
+ * debts linked to a synced account contribute — the numbers come from the
+ * account's own transactions.
+ */
+export function getShortTermHistory(ctx: EngineContext, monthCount = 12): ShortTermHistory {
+  const debtAccounts = new Set(
+    listDebts("active")
+      .filter((d) => SHORT_TERM_KINDS.has(d.kind) && inLens(d.person_id, ctx.lens))
+      .map((d) => d.account_id)
+      .filter((id): id is string => id !== null),
+  );
+  const months = monthsBetween(addMonths(ctx.month, -(monthCount - 1)), ctx.month);
+  const first = months[0]!;
+  const range = { start: `${first}-01`, end: ctx.range.end };
+  const byMonth = new Map<string, ShortTermMonth>(
+    months.map((m) => [m, { month: m, spend: 0, payments: 0, interest: 0 }]),
+  );
+
+  // purchases + interest: the card account's own rows (Plaid amount > 0 = charge)
+  for (const t of flowsForRange(range)) {
+    if (!debtAccounts.has(t.accountId) || t.isTransfer || t.amount <= 0) continue;
+    const bucket = byMonth.get(monthOf(t.date));
+    if (!bucket) continue;
+    if (INTEREST_RE.test(t.plaidDetailed ?? "") || INTEREST_RE.test(t.plaidPrimary ?? "")) {
+      bucket.interest += t.amount;
+    } else {
+      bucket.spend += t.amount;
+    }
+  }
+
+  // payments: inflow legs of marked transfers landing on the card accounts
+  for (const leg of transferLegsForRange(range)) {
+    if (leg.amount >= 0 || !debtAccounts.has(leg.account_id)) continue;
+    const bucket = byMonth.get(monthOf(leg.date));
+    if (bucket) bucket.payments += -leg.amount;
+  }
+
+  return {
+    months: months.map((m) => {
+      const b = byMonth.get(m)!;
+      return { month: m, spend: roundCents(b.spend), payments: roundCents(b.payments), interest: roundCents(b.interest) };
+    }),
   };
 }
 

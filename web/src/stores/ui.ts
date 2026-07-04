@@ -18,11 +18,14 @@ interface UiState {
   month: string;
   theme: "dark" | "light";
   sidebarOpen: boolean;
+  /** Sidebar group labels the user has collapsed. */
+  collapsedGroups: string[];
   setLens: (lens: string) => void;
   setMonth: (month: string) => void;
   stepMonth: (delta: number) => void;
   toggleTheme: () => void;
   toggleSidebar: () => void;
+  toggleGroup: (label: string) => void;
 }
 
 export const useUi = create<UiState>()(
@@ -32,11 +35,18 @@ export const useUi = create<UiState>()(
       month: currentMonth(),
       theme: "dark",
       sidebarOpen: true,
+      collapsedGroups: [],
       setLens: (lens) => set({ lens }),
       setMonth: (month) => set({ month }),
       stepMonth: (delta) => set((s) => ({ month: shiftMonth(s.month, delta) })),
       toggleTheme: () => set((s) => ({ theme: s.theme === "dark" ? "light" : "dark" })),
       toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+      toggleGroup: (label) =>
+        set((s) => ({
+          collapsedGroups: s.collapsedGroups.includes(label)
+            ? s.collapsedGroups.filter((l) => l !== label)
+            : [...s.collapsedGroups, label],
+        })),
     }),
     { name: "bubbles-ui" },
   ),

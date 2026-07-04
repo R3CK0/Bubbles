@@ -137,6 +137,21 @@ export function linkTransaction(
     .run(rpId, reimbursedBy, transactionId);
 }
 
+/**
+ * A bill flagged from the inbox starts without a category; the first manual
+ * categorization of one of its charges becomes the bill's category. Only ever
+ * fills a NULL — a category picked on the Bills page is never overwritten.
+ */
+export function adoptRecurringCategory(transactionId: string, categoryId: string): number {
+  return getDb()
+    .prepare(
+      `UPDATE recurring_payments SET category_id = ?
+       WHERE category_id IS NULL
+         AND rp_id = (SELECT recurring_payment_id FROM transactions WHERE transaction_id = ?)`,
+    )
+    .run(categoryId, transactionId).changes;
+}
+
 /** Retro-stamp a bill's reimbursed_by onto its already-matched transactions. */
 export function propagateReimbursement(rpId: string, reimbursedBy: "work" | "buildings"): number {
   return getDb()
