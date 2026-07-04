@@ -61,4 +61,14 @@ export const config = {
      */
     rpm: Math.max(1, Number(process.env.GEMINI_RPM ?? 8)),
   },
+  /**
+   * Telegram push notifications for background failures (e.g. a bank sync
+   * error). The bot token only lets someone message through this bot, not
+   * read finances, so it lives in .env alongside the Gemini key. The feature
+   * is disabled unless BOTH the token and the chat id are set.
+   */
+  telegram: {
+    botToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
+    chatId: process.env.TELEGRAM_CHAT_ID ?? "",
+  },
 } as const;
