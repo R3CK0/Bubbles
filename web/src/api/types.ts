@@ -286,7 +286,7 @@ export interface Settings { buffer_floor: string | null; buffer_target: string |
 export interface VaultStatus { initialized: boolean; unlocked: boolean; session: { valid: boolean; expiresAt?: string } | null }
 
 // ---- Plaid tier ----
-export interface Item { item_id: string; institution_id: string | null; institution_name: string | null; linked_at: string; last_synced_at: string | null }
+export interface Item { item_id: string; institution_id: string | null; institution_name: string | null; linked_at: string; last_synced_at: string | null; last_sync_error: string | null }
 export interface ApiAccount {
   accountId: string; itemId: string; name: string | null; officialName: string | null; mask: string | null;
   type: string | null; subtype: string | null; currentBalance: number | null; availableBalance: number | null;

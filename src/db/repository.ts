@@ -7,6 +7,8 @@ export interface ItemRow {
   linked_at: string;
   last_synced_at: string | null;
   sync_cursor: string | null;
+  /** Last sync failure message (e.g. ITEM_LOGIN_REQUIRED); null when healthy. */
+  last_sync_error: string | null;
 }
 
 /** The balance/metadata columns Plaid owns — the only fields a sync/refresh writes. */
@@ -83,7 +85,10 @@ export function insertPerson(personId: string, displayName: string, color: strin
   return getDb().prepare(`SELECT * FROM persons WHERE person_id = ?`).get(personId) as PersonRow;
 }
 
-export function upsertItem(row: Omit<ItemRow, "sync_cursor" | "last_synced_at"> & Partial<Pick<ItemRow, "sync_cursor" | "last_synced_at">>) {
+export function upsertItem(
+  row: Omit<ItemRow, "sync_cursor" | "last_synced_at" | "last_sync_error"> &
+    Partial<Pick<ItemRow, "sync_cursor" | "last_synced_at" | "last_sync_error">>,
+) {
   getDb()
     .prepare(
       `INSERT INTO items (item_id, institution_id, institution_name, linked_at, last_synced_at, sync_cursor)
@@ -115,9 +120,15 @@ export function deleteItem(itemId: string) {
 }
 
 export function setSyncCursor(itemId: string, cursor: string, syncedAt: string) {
+  // A successful sync also clears any prior error state.
   getDb()
-    .prepare(`UPDATE items SET sync_cursor = ?, last_synced_at = ? WHERE item_id = ?`)
+    .prepare(`UPDATE items SET sync_cursor = ?, last_synced_at = ?, last_sync_error = NULL WHERE item_id = ?`)
     .run(cursor, syncedAt, itemId);
+}
+
+/** Record (or clear, with null) the last sync failure for an item. */
+export function setItemSyncError(itemId: string, error: string | null) {
+  getDb().prepare(`UPDATE items SET last_sync_error = ? WHERE item_id = ?`).run(error, itemId);
 }
 
 // New rows land with tracked=1 / classified_at=NULL (the awaiting-classification

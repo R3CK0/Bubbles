@@ -43,6 +43,27 @@ export async function createLinkToken(vault: Vault, clientUserId: string): Promi
   return response.data.link_token;
 }
 
+/**
+ * Creates a Link token in **update mode** to repair an item that needs
+ * re-authentication (Plaid ITEM_LOGIN_REQUIRED, changed/expired MFA, etc.).
+ * Passing the item's existing access_token — and NO products — tells Plaid to
+ * run the abbreviated repair flow. The item_id, its accounts, and its
+ * transactions are all preserved, so there are no duplicates and nothing to
+ * re-classify; the next sync just resumes.
+ */
+export async function createUpdateLinkToken(vault: Vault, itemId: string): Promise<string> {
+  const client = requirePlaidClient(vault);
+  const accessToken = vault.getAccessToken(itemId);
+  const response = await client.linkTokenCreate({
+    user: { client_user_id: "household" },
+    client_name: "Finances",
+    country_codes: resolveCountryCodes(),
+    language: config.plaid.defaultLanguage,
+    access_token: accessToken,
+  });
+  return response.data.link_token;
+}
+
 export interface ExchangeResult {
   itemId: string;
   institutionId: string | null;

@@ -15,6 +15,7 @@ import { migration as m014 } from "./014_goal_tagged_transactions.js";
 import { migration as m015 } from "./015_mapping_rules.js";
 import { migration as m016 } from "./016_debt_statements.js";
 import { migration as m017 } from "./017_goal_categories.js";
+import { migration as m018 } from "./018_item_sync_error.js";
 
 export interface Migration {
   version: number;
@@ -41,4 +42,5 @@ export const MIGRATIONS: Migration[] = [
   m015,
   m016,
   m017,
+  m018,
 ];

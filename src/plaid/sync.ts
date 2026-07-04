@@ -1,7 +1,7 @@
 import { Vault } from "../vault/vault.js";
 import { createPlaidClient } from "./client.js";
 import { mapPlaidTransaction, removedTransactionId } from "./transactions.js";
-import { getItem, listItems, markTransactionRemoved, setSyncCursor, upsertTransaction } from "../db/repository.js";
+import { getItem, listItems, markTransactionRemoved, setItemSyncError, setSyncCursor, upsertTransaction } from "../db/repository.js";
 import { withRetry } from "../util/retry.js";
 import { notifySyncFailure } from "../util/notify.js";
 
@@ -129,6 +129,9 @@ export async function syncItemTransactions(vault: Vault, itemId: string): Promis
         console.warn(`[sync] ${itemId} data mutated mid-pagination — restarting from the original cursor (restart ${restart + 1}/${MAX_PAGINATION_RESTARTS})`);
         continue;
       }
+      // Persist the failure so the UI can flag the bank (e.g. ITEM_LOGIN_REQUIRED
+      // → offer a reconnect). Cleared by the next successful sync (setSyncCursor).
+      setItemSyncError(itemId, plaidError(err).errorCode ?? (err instanceof Error ? err.message : String(err)));
       throw err;
     }
 
