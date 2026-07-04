@@ -1,10 +1,20 @@
 import { useState } from "react";
-import { useAction, useApi, usePersons, useVault } from "../api/hooks";
+import { useAction, useApi, useInvalidate, usePersons, useVault } from "../api/hooks";
 import { api, ApiError } from "../api/client";
 import type { ApiAccount, Item } from "../api/types";
 import { Card, EmptyState, Modal, Spinner } from "../components/ui";
 import { fmt } from "../lib/format";
+import { openPlaidLink } from "../lib/plaid";
 import { AddBankWizard } from "./AddBankWizard";
+
+/** Turn a raw Plaid error code into a one-line, user-facing explanation. */
+function friendlySyncError(code: string): string {
+  if (/ITEM_LOGIN_REQUIRED/i.test(code)) return "Your bank needs you to sign in again (including any 2-factor code).";
+  if (/PENDING_EXPIRATION|PENDING_DISCONNECT/i.test(code)) return "This connection is about to expire — reconnect to keep it syncing.";
+  if (/INVALID_CREDENTIALS/i.test(code)) return "Your saved bank credentials no longer work — reconnect to update them.";
+  if (/INSUFFICIENT_CREDENTIALS|MFA/i.test(code)) return "Your bank is asking for more login info — reconnect to provide it.";
+  return code;
+}
 
 export const REGISTERED_TYPES = ["FHSA", "TFSA", "RRSP", "RESP", "NONREG"] as const;
 
@@ -98,10 +108,33 @@ function InstitutionCard({ item, personName, syncing, onSync, onUnlink }: {
   item: Item; personName: (id: string | null) => string; syncing: boolean; onSync: () => void; onUnlink: () => void;
 }) {
   const accounts = useApi<{ accounts: ApiAccount[] }>(["items.accounts", item.item_id], `/api/items/${item.item_id}/accounts`, { retry: false });
+  const invalidate = useInvalidate();
   const [editing, setEditing] = useState<ApiAccount | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [reconnectErr, setReconnectErr] = useState<string | null>(null);
   const fresh = item.last_synced_at ? Date.now() - new Date(item.last_synced_at).getTime() < 24 * 3600_000 : false;
+  const needsReconnect = !!item.last_sync_error;
   const visible = (accounts.data?.accounts ?? []).filter((a) => a.tracked && !a.isClosed);
   const hidden = (accounts.data?.accounts ?? []).length - visible.length;
+
+  /** Repair this bank via Plaid Link update mode (same item — no duplicates). */
+  const reconnect = async () => {
+    setReconnecting(true);
+    setReconnectErr(null);
+    try {
+      const { linkToken } = await api<{ linkToken: string }>(`/api/items/${item.item_id}/reconnect`, { method: "POST", json: {} });
+      const outcome = await openPlaidLink(linkToken); // null = user closed without finishing
+      if (outcome !== null) {
+        // Repaired in place: a normal sync now succeeds and clears the error flag.
+        await api(`/api/items/${item.item_id}/sync`, { method: "POST", json: {} }).catch(() => undefined);
+        invalidate(["items", "overview", "cashflow", "budget", "transactions", "bills"]);
+      }
+    } catch (err) {
+      setReconnectErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReconnecting(false);
+    }
+  };
 
   return (
     <Card style={{ padding: "18px 20px" }}>
@@ -116,11 +149,27 @@ function InstitutionCard({ item, personName, syncing, onSync, onUnlink }: {
             {item.last_synced_at ? `synced ${new Date(item.last_synced_at).toLocaleDateString()}` : "never synced"}
           </div>
         </div>
+        <div className="btn-ghost" title="Reconnect (re-authenticate with your bank)" style={{ padding: 8, color: needsReconnect ? "var(--danger)" : undefined }} onClick={reconnect}>
+          {reconnecting ? <Spinner /> : <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg>}
+        </div>
         <div className="btn-ghost" title="Sync now" style={{ padding: 8 }} onClick={onSync}>
           {syncing ? <Spinner /> : <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round"><path d="M21 12a9 9 0 1 1-3-6.7M21 4v4h-4" /></svg>}
         </div>
         <div className="btn-ghost" title="Unlink" style={{ padding: 8 }} onClick={onUnlink}>×</div>
       </div>
+      {(needsReconnect || reconnectErr) && (
+        <div className="row" style={{ marginTop: 12, gap: 10, padding: "10px 12px", borderRadius: 10, alignItems: "center", background: "color-mix(in srgb, var(--danger) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--danger) 32%, transparent)" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 600, color: "var(--danger)" }}>Reconnect needed</div>
+            <div className="muted" style={{ fontSize: 11, marginTop: 2, lineHeight: 1.4 }}>
+              {reconnectErr ? `Reconnect failed: ${reconnectErr}` : friendlySyncError(item.last_sync_error!)}
+            </div>
+          </div>
+          <button className="btn" style={{ background: "var(--danger)", color: "#fff", flex: "none" }} disabled={reconnecting} onClick={reconnect}>
+            {reconnecting ? "Opening…" : "Reconnect"}
+          </button>
+        </div>
+      )}
       <div className="col" style={{ marginTop: 14, gap: 8 }}>
         {visible.map((a) => (
           <div key={a.accountId} className="panel row" style={{ gap: 10, padding: "10px 12px" }}>

@@ -2,7 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { vaultGuard } from "../middleware/vaultGuard.js";
 import { asyncHandler } from "../asyncHandler.js";
-import { createLinkToken, exchangePublicToken } from "../../plaid/link.js";
+import { requireParam } from "../params.js";
+import { createLinkToken, createUpdateLinkToken, exchangePublicToken } from "../../plaid/link.js";
 import { Vault } from "../../vault/vault.js";
 
 export const linkRouter = Router();
@@ -29,5 +30,20 @@ linkRouter.post(
     const vault = req.app.locals.vault as Vault;
     const result = await exchangePublicToken(vault, publicToken);
     res.json(result);
+  }),
+);
+
+/**
+ * Update-mode Link token to repair an item that needs re-authentication.
+ * The frontend opens Plaid Link with this token; on success the same item is
+ * fixed in place (no public-token exchange, no duplicates) and a normal sync
+ * resumes.
+ */
+linkRouter.post(
+  "/api/items/:itemId/reconnect",
+  asyncHandler(async (req, res) => {
+    const vault = req.app.locals.vault as Vault;
+    const linkToken = await createUpdateLinkToken(vault, requireParam(req, "itemId"));
+    res.json({ linkToken });
   }),
 );
