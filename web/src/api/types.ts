@@ -23,7 +23,7 @@ export interface CashflowSummary { income: number; spend: number; net: number; b
 export interface CategoryAmount { categoryId: string | null; name: string; kind: CategoryKind | "uncategorized"; parentId: string | null; amount: number }
 export interface Overview {
   hero: Hero; cashflow: CashflowSummary;
-  goals: { goalId: string; name: string; progress: number; feasible: "yes" | "tight" | "no" }[];
+  goals: { goalId: string; name: string; progress: number; feasible: "yes" | "tight" | "no"; category: GoalCategory; funded: number; target: number }[];
   next7Days: BillDay[]; lowWindows: LowWindow[]; alerts: Alert[]; uncategorized: number; lastSync: string | null;
 }
 
@@ -201,6 +201,8 @@ export interface PortfolioSeries { series: TimePoint[]; decomposition: Decomposi
 export interface Holding {
   securityId: string; ticker: string | null; name: string | null; secType: string | null;
   quantity: number; value: number; costBasis: number | null; gain: number | null; weight: number; spark30d: TimePoint[];
+  /** Live intraday change from the quote cache, when available. */
+  changePct?: number | null;
 }
 export interface AllocationSlice { class: string; value: number; weight: number; target: number | null; drift: number | null }
 export interface Performance { twr: number | null; mwr: number | null; dividendsByMonth: { month: string; value: number }[] }
@@ -209,15 +211,38 @@ export interface ManualAsset {
   valuations: { date: string; value: number; source: string | null }[];
 }
 export interface BuildingsPnl { asset: ManualAsset | null; incomeByMonth: { month: string; value: number }[]; expensesByMonth: { month: string; value: number }[]; netByMonth: { month: string; value: number }[] }
+export type AssetType = "stock" | "etf" | "crypto" | "option" | "currency" | "commodity" | "cash" | "other";
 export interface Position {
   position_id: string; account_id: string; symbol: string | null; name: string;
-  asset_type: "stock" | "etf" | "crypto" | "option" | "cash" | "other";
+  asset_type: AssetType;
   quantity: number; book_cost: number | null; manual_value: number | null; currency: string;
   lastPrice: number | null; currentValue: number;
+  /** Live intraday enrichment from the 5-min quote cache. */
+  changePct: number | null; quoteAsOf: string | null;
 }
 export interface AccountPositions {
   accountId: string; accountName: string | null; registeredType: string | null; personId: string | null;
   positions: Position[]; computedTotal: number; reportedBalance: number | null; drift: number | null;
+}
+export interface PositionsView { accounts: AccountPositions[]; quotesAsOf: string | null }
+
+// ---- market data (search / quote / options) ----
+export type AssetKind = "stock" | "etf" | "crypto" | "option" | "currency" | "commodity" | "index" | "other";
+export interface SymbolHit {
+  symbol: string; name: string; kind: AssetKind;
+  exchange: string | null; currency: string | null; typeLabel: string | null;
+}
+export interface Quote {
+  symbol: string; price: number; prevClose: number | null; changePct: number | null;
+  currency: string; marketState: string | null; asOf: string; source: string;
+}
+export interface OptionQuote {
+  contractSymbol: string; strike: number; optionType: "call" | "put"; expiry: string;
+  bid: number | null; ask: number | null; lastPrice: number | null; impliedVol: number | null; currency: string;
+}
+export interface OptionChain {
+  underlying: string; expiry: string; expiries: string[]; currency: string;
+  calls: OptionQuote[]; puts: OptionQuote[];
 }
 
 // ---- goals ----

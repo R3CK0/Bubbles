@@ -22,7 +22,7 @@ import { syncAllItems } from "../plaid/sync.js";
 import { refreshAndRebuild } from "../engine/positionsService.js";
 import { ensureRates } from "../engine/fxService.js";
 import { snapshotAccounts } from "../engine/snapshotService.js";
-import { categorizeRange, detectTransfers, matchPendingTransfers } from "../engine/categorizationService.js";
+import { categorizeRange, detectTransfers, matchPendingTransfers, sweepCardPayments } from "../engine/categorizationService.js";
 import { matchNewTransactions, runDetection } from "../engine/recurringService.js";
 import { refreshGoalFunding } from "../engine/planningService.js";
 import { detectContributions } from "../engine/taxService.js";
@@ -63,10 +63,16 @@ export async function runNightly(vault: Vault | null): Promise<{ status: string;
   await step("snapshots", () => snapshotAccounts(today));
   await step("categorize", () => {
     const range = { start: addDays(today, -60), end: today };
+    const applied = categorizeRange(range);
+    const transferPairs = detectTransfers(range);
+    // card/loan payments the amount pass didn't claim → pending, so they never
+    // read as income; matchPendingTransfers reconciles them with the funding leg
+    const cardPayments = sweepCardPayments(range);
     return {
-      applied: categorizeRange(range),
-      transferPairs: detectTransfers(range),
-      // user-marked legs waiting for their counterpart (validates or alerts)
+      applied,
+      transferPairs,
+      cardPayments,
+      // user-marked + auto-flagged legs waiting for a counterpart (validate or alert)
       pendingTransfers: matchPendingTransfers(today),
     };
   });

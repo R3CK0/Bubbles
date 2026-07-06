@@ -44,6 +44,10 @@ export interface CategoryNode {
 export interface FlowTx {
   transactionId: string;
   accountId: string;
+  /** Plaid account type of the owning account ('depository' | 'credit' |
+   *  'loan' | 'investment' | …). Lets the engine tell a card/loan payment
+   *  (an inflow that pays a balance down, never income) from real income. */
+  accountType: string | null;
   personId: string | null;
   amount: number;
   currency: string | null;

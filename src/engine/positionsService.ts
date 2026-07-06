@@ -26,19 +26,24 @@ import {
   listPositions,
   positionsAsOf,
   pricesRange,
+  quotesBySymbol,
+  upsertOptionContract,
   upsertSecurities,
   writeHoldingsSnapshot,
   type HoldingSnapshotWrite,
   type ManualPositionRow,
 } from "../db/repositories/investments.js";
 import { fxRatesRange } from "../db/repositories/history.js";
-import { refreshPrices } from "./marketDataService.js";
+import { refreshPrices, refreshQuotes, type QuoteRefreshResult } from "./marketDataService.js";
+import { refreshLiveUsdCad } from "./fxService.js";
 
 const ASSET_TYPE_TO_SEC_TYPE: Record<ManualPositionRow["asset_type"], string> = {
   stock: "equity",
   etf: "etf",
   crypto: "crypto",
   option: "option",
+  currency: "currency",
+  commodity: "commodity",
   cash: "cash",
   other: "other",
 };
@@ -54,6 +59,14 @@ export interface PositionInput {
   manualValue?: number | null;
   currency?: string;
   effectiveDate?: string;
+  /** Set when the symbol is an option contract picked from the chain. */
+  option?: {
+    underlying: string;
+    expiry: string;
+    strike: number;
+    optionType: "call" | "put";
+    currency?: string;
+  };
 }
 
 /**
@@ -94,11 +107,32 @@ export function savePosition(input: PositionInput, today: string): ManualPositio
       raw_json: null,
     },
   ]);
+  // Persist the resolved option contract so it renders structured later.
+  if (input.option && row.symbol) {
+    upsertOptionContract({
+      contract_symbol: row.symbol,
+      underlying: input.option.underlying,
+      expiry: input.option.expiry,
+      strike: input.option.strike,
+      option_type: input.option.optionType,
+      currency: input.option.currency ?? row.currency,
+      raw_json: null,
+    });
+  }
   return row;
 }
 
 export function removePosition(positionId: string, endDate: string): boolean {
   return closePosition(positionId, endDate);
+}
+
+/** toCAD, but fall back to the raw amount when no rate exists (never throws). */
+function cadOrRaw(amount: number, currency: string, date: string, fx: FxTable): number {
+  try {
+    return toCAD(amount, currency, date, fx);
+  } catch {
+    return roundCents(amount);
+  }
 }
 
 function priceOn(
@@ -159,13 +193,29 @@ export function rebuildSnapshots(from: string, to: string): RebuildResult {
         quantity: p.quantity,
         price: unitPrice,
         value,
-        cost_basis: p.book_cost,
+        // Book cost is entered in the position's currency — convert to CAD so
+        // gain (CAD value − CAD cost) never mixes currencies.
+        cost_basis: p.book_cost !== null ? cadOrRaw(p.book_cost, p.currency, date, fx) : null,
         currency: "CAD",
       });
     }
   }
   writeHoldingsSnapshot(rows);
   return { from, to, snapshotRows: rows.length };
+}
+
+/**
+ * Live intraday path: refresh quotes for `symbols` (default all held), fold
+ * them into today's prices, and rebuild today's snapshot so holdings/allocation/
+ * series reflect the live value. Both the 5-min job and the manual "Live" button
+ * go through here; the job pre-filters `symbols` to what's in-session.
+ */
+export async function refreshLiveAndRebuild(today: string, symbols?: string[]): Promise<QuoteRefreshResult> {
+  const result = await refreshQuotes(today, symbols);
+  // Keep USD/CAD current before rebuilding so today's CAD values use a live rate.
+  await refreshLiveUsdCad(today);
+  if (result.quoted > 0) rebuildSnapshots(today, today);
+  return result;
 }
 
 /** Prices refreshed, then snapshots rebuilt from the full position horizon. */
@@ -182,6 +232,9 @@ export async function refreshAndRebuild(today: string): Promise<{ prices: Awaite
 export interface PositionView extends ManualPositionRow {
   lastPrice: number | null;
   currentValue: number;
+  /** Live intraday enrichment (from the 5-min quote cache), when available. */
+  changePct: number | null;
+  quoteAsOf: string | null;
 }
 
 export interface AccountPositionsView {
@@ -206,6 +259,7 @@ export function getPositionsView(ctx: EngineContext): AccountPositionsView[] {
 
   const prices = pricesRange({ start: addDays(ctx.today, -370), end: ctx.today });
   const fx = buildFxTable(fxRatesRange({ start: addDays(ctx.today, -370), end: ctx.today }));
+  const quotes = quotesBySymbol();
 
   return accounts
     .filter((a) => ctx.lens === "combined" || a.person_id === null || a.person_id === ctx.lens)
@@ -213,6 +267,8 @@ export function getPositionsView(ctx: EngineContext): AccountPositionsView[] {
       const positions = listPositions(a.account_id).map((p) => {
         let lastPrice: number | null = null;
         let currentValue = 0;
+        let changePct: number | null = null;
+        let quoteAsOf: string | null = null;
         if (p.symbol) {
           const price = priceOn(prices.get(p.symbol), ctx.today);
           lastPrice = price?.close ?? null;
@@ -223,10 +279,15 @@ export function getPositionsView(ctx: EngineContext): AccountPositionsView[] {
               currentValue = roundCents(p.quantity * price.close);
             }
           }
+          const quote = quotes.get(p.symbol);
+          if (quote) {
+            changePct = quote.change_pct;
+            quoteAsOf = quote.as_of;
+          }
         } else {
           currentValue = roundCents(p.manual_value ?? 0);
         }
-        return { ...p, lastPrice, currentValue };
+        return { ...p, lastPrice, currentValue, changePct, quoteAsOf };
       });
       const computedTotal = roundCents(positions.reduce((s, p) => s + p.currentValue, 0));
       const reportedBalance = a.current_balance;

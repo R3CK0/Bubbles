@@ -1,9 +1,10 @@
 import { useNavigate } from "react-router-dom";
 import { useAction, useOverview } from "../api/hooks";
 import { api } from "../api/client";
-import { Card, Ring, Spark, Feasibility, EmptyState } from "../components/ui";
+import { Card, Ring, Spark, StatusChip, EmptyState } from "../components/ui";
 import { Tip } from "../components/Tip";
 import { fmt, fmtDelta, dayLabel } from "../lib/format";
+import { goalStatus } from "../lib/goalStatus";
 
 export function Overview() {
   const nav = useNavigate();
@@ -14,7 +15,7 @@ export function Overview() {
 
   const { hero, cashflow, goals, next7Days, lowWindows, alerts } = data;
   const delta = hero.monthDelta;
-  const onTrack = goals.filter((g) => g.feasible === "yes").length;
+  const onTrack = goals.filter((g) => goalStatus(g.category, g.funded, g.target, g.feasible).onTrack).length;
   const lowDates = new Set(lowWindows.flatMap((w) => {
     const days: string[] = [];
     for (let d = new Date(w.start + "T00:00:00"); d <= new Date(w.end + "T00:00:00"); d.setDate(d.getDate() + 1)) days.push(d.toISOString().slice(0, 10));
@@ -70,13 +71,14 @@ export function Overview() {
           ) : (
             <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
               {goals.map((g) => {
-                const color = g.feasible === "yes" ? "var(--accent)" : g.feasible === "tight" ? "var(--warn)" : "var(--danger)";
+                const status = goalStatus(g.category, g.funded, g.target, g.feasible);
+                const color = status.color;
                 return (
                   <div key={g.goalId} className="panel col" style={{ flex: "none", width: 142, padding: 16, alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => nav("/goals")}>
                     <Ring pct={g.progress} color={color} />
                     <div style={{ textAlign: "center" }}>
                       <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.2 }}>{g.name}</div>
-                      <div style={{ marginTop: 5 }}><Feasibility verdict={g.feasible} /></div>
+                      <div style={{ marginTop: 5 }}><StatusChip color={status.color} label={status.label} /></div>
                     </div>
                   </div>
                 );

@@ -51,6 +51,80 @@ export function upsertPrices(rows: { security_id: string; date: string; close_pr
   run(rows);
 }
 
+// ---- live intraday quotes (a cache; security_prices stays authoritative) ----
+
+export interface QuoteRow {
+  security_id: string;
+  price: number;
+  prev_close: number | null;
+  change_pct: number | null;
+  currency: string;
+  market_state: string | null;
+  source: string;
+  as_of: string;
+  raw_json: string | null;
+}
+
+export function upsertQuotes(rows: QuoteRow[]): void {
+  const stmt = getDb().prepare(
+    `INSERT INTO security_quotes (security_id, price, prev_close, change_pct, currency, market_state, source, as_of, raw_json)
+     VALUES (@security_id, @price, @prev_close, @change_pct, @currency, @market_state, @source, @as_of, @raw_json)
+     ON CONFLICT(security_id) DO UPDATE SET
+       price = excluded.price, prev_close = excluded.prev_close, change_pct = excluded.change_pct,
+       currency = excluded.currency, market_state = excluded.market_state, source = excluded.source,
+       as_of = excluded.as_of, raw_json = excluded.raw_json`,
+  );
+  const run = getDb().transaction((all: QuoteRow[]) => {
+    for (const r of all) stmt.run(r);
+  });
+  run(rows);
+}
+
+/** Latest quote per symbol, keyed by security_id, for live enrichment. */
+export function quotesBySymbol(): Map<string, QuoteRow> {
+  const rows = getDb().prepare(`SELECT * FROM security_quotes`).all() as QuoteRow[];
+  return new Map(rows.map((r) => [r.security_id, r]));
+}
+
+/** Most recent quote timestamp across all symbols (the portfolio "as of"). */
+export function latestQuoteTime(): string | null {
+  const row = getDb().prepare(`SELECT MAX(as_of) AS t FROM security_quotes`).get() as { t: string | null };
+  return row.t;
+}
+
+// ---- resolved option contracts (underlying/expiry/strike for a contract) ----
+
+export interface OptionContractRow {
+  contract_symbol: string;
+  underlying: string;
+  expiry: string;
+  strike: number;
+  option_type: "call" | "put";
+  currency: string;
+  raw_json: string | null;
+}
+
+export function upsertOptionContract(row: OptionContractRow): void {
+  getDb()
+    .prepare(
+      `INSERT INTO option_contracts (contract_symbol, underlying, expiry, strike, option_type, currency, raw_json)
+       VALUES (@contract_symbol, @underlying, @expiry, @strike, @option_type, @currency, @raw_json)
+       ON CONFLICT(contract_symbol) DO UPDATE SET
+         underlying = excluded.underlying, expiry = excluded.expiry, strike = excluded.strike,
+         option_type = excluded.option_type, currency = excluded.currency, raw_json = excluded.raw_json`,
+    )
+    .run(row);
+}
+
+export function optionContractsFor(symbols: string[]): Map<string, OptionContractRow> {
+  if (symbols.length === 0) return new Map();
+  const placeholders = symbols.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(`SELECT * FROM option_contracts WHERE contract_symbol IN (${placeholders})`)
+    .all(...symbols) as OptionContractRow[];
+  return new Map(rows.map((r) => [r.contract_symbol, r]));
+}
+
 export interface HoldingSnapshotWrite {
   account_id: string;
   security_id: string;
@@ -154,7 +228,7 @@ export interface ManualPositionRow {
   account_id: string;
   symbol: string | null;
   name: string;
-  asset_type: "stock" | "etf" | "crypto" | "option" | "cash" | "other";
+  asset_type: "stock" | "etf" | "crypto" | "option" | "currency" | "commodity" | "cash" | "other";
   quantity: number;
   book_cost: number | null;
   manual_value: number | null;
@@ -226,6 +300,26 @@ export function positionSymbols(): string[] {
       .prepare(`SELECT DISTINCT symbol FROM manual_positions WHERE symbol IS NOT NULL`)
       .all() as { symbol: string }[]
   ).map((r) => r.symbol);
+}
+
+/** Distinct symbols of currently-held positions with their asset type — the
+ *  intraday job uses the type to decide market-hours eligibility. */
+export function activePositionSymbols(): { symbol: string; asset_type: ManualPositionRow["asset_type"] }[] {
+  return getDb()
+    .prepare(
+      `SELECT DISTINCT p.symbol AS symbol, p.asset_type AS asset_type FROM manual_positions p
+       JOIN accounts a ON a.account_id = p.account_id
+       WHERE a.tracked = 1 AND p.symbol IS NOT NULL AND p.end_date IS NULL`,
+    )
+    .all() as { symbol: string; asset_type: ManualPositionRow["asset_type"] }[];
+}
+
+/** True when any active position is held in a non-CAD currency (needs FX). */
+export function hasNonCadPositions(): boolean {
+  const row = getDb()
+    .prepare(`SELECT COUNT(*) AS n FROM manual_positions WHERE end_date IS NULL AND currency IS NOT NULL AND currency != 'CAD'`)
+    .get() as { n: number };
+  return row.n > 0;
 }
 
 export function latestPriceDate(securityId: string): string | null {

@@ -4,6 +4,7 @@ import type { CategoryNode, FlowTx } from "./types.js";
 export function tx(over: Partial<FlowTx> & { transactionId: string; amount: number; date: string }): FlowTx {
   return {
     accountId: "acc-1",
+    accountType: "depository",
     personId: "nick",
     currency: "CAD",
     merchantName: null,

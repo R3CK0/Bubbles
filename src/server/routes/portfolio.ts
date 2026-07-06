@@ -16,9 +16,20 @@ import {
   revalueAsset,
   setAllocationTargets,
 } from "../../engine/portfolioService.js";
-import { getPositionsView, refreshAndRebuild, removePosition, savePosition } from "../../engine/positionsService.js";
-import { validateSymbol } from "../../engine/marketDataService.js";
-import { manualAssetSchema, valuationSchema, allocationTargetsSchema, positionSchema } from "../contracts.js";
+import { getPositionsView, refreshAndRebuild, refreshLiveAndRebuild, removePosition, savePosition } from "../../engine/positionsService.js";
+import { validateSymbol, searchSymbols } from "../../engine/marketDataService.js";
+import { refreshLiveUsdCad } from "../../engine/fxService.js";
+import { quoteSymbols, optionChain } from "../../engine/marketData/index.js";
+import { latestQuoteTime, quotesBySymbol } from "../../db/repositories/investments.js";
+import {
+  manualAssetSchema,
+  valuationSchema,
+  allocationTargetsSchema,
+  positionSchema,
+  symbolSearchSchema,
+  quoteQuerySchema,
+  optionChainSchema,
+} from "../contracts.js";
 import { requireParam } from "../params.js";
 
 export const portfolioRouter = Router();
@@ -34,7 +45,12 @@ portfolioRouter.get("/api/portfolio/series", (req, res) => {
 });
 
 portfolioRouter.get("/api/portfolio/holdings", (req, res) => {
-  res.json({ holdings: getHoldings(buildContext(req.query)) });
+  const quotes = quotesBySymbol();
+  const holdings = getHoldings(buildContext(req.query)).map((h) => ({
+    ...h,
+    changePct: quotes.get(h.securityId)?.change_pct ?? null,
+  }));
+  res.json({ holdings });
 });
 
 portfolioRouter.get("/api/portfolio/allocation", (req, res) => {
@@ -61,19 +77,27 @@ portfolioRouter.get("/api/portfolio/buildings", (req, res) => {
 // ---- manual positions (the user-maintained portfolio state) ----
 
 portfolioRouter.get("/api/positions", (req, res) => {
-  res.json({ accounts: getPositionsView(buildContext(req.query)) });
+  res.json({ accounts: getPositionsView(buildContext(req.query)), quotesAsOf: latestQuoteTime() });
 });
 
-portfolioRouter.post("/api/positions", (req, res) => {
+/** Pull a live USD/CAD rate when the position isn't CAD, so its value converts
+ *  immediately. Best-effort — never blocks the save from succeeding. */
+function ensureFxFor(currency: string | undefined | null, today: string): Promise<unknown> {
+  return currency && currency !== "CAD" ? refreshLiveUsdCad(today).catch(() => false) : Promise.resolve();
+}
+
+portfolioRouter.post("/api/positions", (req, res, next) => {
   const body = positionSchema.parse(req.body);
   const today = new Date().toISOString().slice(0, 10);
-  res.status(201).json({ position: savePosition(body, today) });
+  const position = savePosition(body, today);
+  ensureFxFor(body.currency, today).then(() => res.status(201).json({ position })).catch(next);
 });
 
-portfolioRouter.patch("/api/positions/:positionId", (req, res) => {
+portfolioRouter.patch("/api/positions/:positionId", (req, res, next) => {
   const body = positionSchema.parse(req.body);
   const today = new Date().toISOString().slice(0, 10);
-  res.json({ position: savePosition({ ...body, positionId: requireParam(req, "positionId") }, today) });
+  const position = savePosition({ ...body, positionId: requireParam(req, "positionId") }, today);
+  ensureFxFor(body.currency, today).then(() => res.json({ position })).catch(next);
 });
 
 portfolioRouter.delete("/api/positions/:positionId", (req, res) => {
@@ -93,6 +117,41 @@ portfolioRouter.post("/api/positions/refresh", (req, res, next) => {
 portfolioRouter.get("/api/positions/validate/:symbol", (req, res, next) => {
   validateSymbol(requireParam(req, "symbol"))
     .then((result) => res.json(result))
+    .catch(next);
+});
+
+/** On-demand live quote refresh (the "● Live" button), scoped to held symbols. */
+portfolioRouter.post("/api/positions/quotes/refresh", (_req, res, next) => {
+  const today = new Date().toISOString().slice(0, 10);
+  refreshLiveAndRebuild(today)
+    .then((result) => res.json(result))
+    .catch(next);
+});
+
+// ---- market data: autocomplete, live quotes, option chains ----
+
+/** Autocomplete for the add-ticker field (equities/ETFs/FX/futures/options/crypto). */
+portfolioRouter.get("/api/securities/search", (req, res, next) => {
+  const { q } = symbolSearchSchema.parse({ q: req.query.q });
+  searchSymbols(q)
+    .then((hits) => res.json({ hits }))
+    .catch(next);
+});
+
+/** Live quotes for a comma-separated symbol list — fetches online, not cached. */
+portfolioRouter.get("/api/securities/quote", (req, res, next) => {
+  const { symbols } = quoteQuerySchema.parse({ symbols: req.query.symbols });
+  const list = symbols.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 20);
+  quoteSymbols(list)
+    .then((quotes) => res.json({ quotes }))
+    .catch(next);
+});
+
+/** Option chain for an underlying (expiries + strikes with bid/ask/IV). */
+portfolioRouter.get("/api/options/chain", (req, res, next) => {
+  const { underlying, expiry } = optionChainSchema.parse({ underlying: req.query.underlying, expiry: req.query.expiry });
+  optionChain(underlying, expiry)
+    .then((chain) => res.json(chain))
     .catch(next);
 });
 

@@ -43,6 +43,11 @@ opsRouter.get("/api/overview", (req, res) => {
       name: g.name,
       progress: g.progress,
       feasible: verdicts.get(g.goal_id) ?? "yes",
+      // category + funded/target let the client mark spending goals "on track"
+      // until they actually overspend, independent of the funding verdict
+      category: g.category,
+      funded: g.funded_amount,
+      target: g.target_amount,
     })),
     next7Days: bills.days.filter((d) => d.date >= ctx.today && d.date <= week),
     lowWindows: bills.lowWindows,

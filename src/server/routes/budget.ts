@@ -111,6 +111,8 @@ budgetRouter.get("/api/categories/inbox", (req, res) => {
 const txListQuery = z.object({
   search: z.string().optional(),
   category: z.string().optional(),
+  sort: z.enum(["date", "amount", "account", "category"]).optional(),
+  dir: z.enum(["asc", "desc"]).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -121,6 +123,8 @@ budgetRouter.get("/api/transactions/all", (req, res) => {
   const q = txListQuery.parse({
     search: req.query.search,
     category: req.query.category,
+    sort: req.query.sort,
+    dir: req.query.dir,
     limit: req.query.limit,
     offset: req.query.offset,
   });
@@ -128,6 +132,8 @@ budgetRouter.get("/api/transactions/all", (req, res) => {
     listTransactions(buildContext(req.query), {
       search: q.search,
       categoryId: q.category,
+      sort: q.sort,
+      dir: q.dir,
       limit: q.limit,
       offset: q.offset,
     }),

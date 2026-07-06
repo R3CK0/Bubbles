@@ -15,6 +15,7 @@ import {
   categorizeManually,
   markTransferPending,
   matchPendingTransfers,
+  sweepCardPayments,
   unmarkTransfer,
 } from "./categorizationService.js";
 import { flagRecurringFromTransaction, matchNewTransactions } from "./recurringService.js";
@@ -209,6 +210,56 @@ describe("user-marked transfers", () => {
     expect(matchPendingTransfers("2026-07-20").stale).toBe(1); // window closed, no counterpart
     expect(getFlowTx("t-stale")!.isTransfer).toBe(true); // stays excluded until the user unmarks
     expect(unmarkTransfer("t-stale")).toBe(1);
+  });
+});
+
+describe("credit-card & loan payments", () => {
+  beforeAll(() => {
+    getDb()
+      .prepare(
+        `INSERT INTO accounts (account_id, item_id, name, type, person_id, updated_at)
+         VALUES ('acc-cc', 'item-1', 'Visa', 'credit', 'nick', ?)`,
+      )
+      .run(NOW);
+  });
+
+  it("still amount-pairs a card payment with its funding withdrawal", () => {
+    insertTx("t-cc-pay", "acc-cc", -1200, "2026-10-12", { plaidPrimary: "LOAN_PAYMENTS", plaidDetailed: "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT" });
+    insertTx("t-cc-fund", "acc-chq", 1200, "2026-10-10", { merchant: "Payment - Visa" });
+    detectTransfers({ start: "2026-10-01", end: "2026-10-31" });
+    const pay = getFlowTx("t-cc-pay")!;
+    const fund = getFlowTx("t-cc-fund")!;
+    expect(pay.isTransfer).toBe(true);
+    expect(fund.isTransfer).toBe(true);
+    expect(pay.transferGroupId).toBe(fund.transferGroupId);
+  });
+
+  it("flags an unmatched card payment as pending so it never reads as income", () => {
+    insertTx("t-cc-lonely", "acc-cc", -300, "2026-11-05", { plaidPrimary: "LOAN_PAYMENTS" });
+    const range = { start: "2026-11-01", end: "2026-11-30" };
+    expect(detectTransfers(range)).toBe(0); // no funding leg to amount-pair
+    expect(sweepCardPayments(range)).toBe(1);
+    const leg = getFlowTx("t-cc-lonely")!;
+    expect(leg.isTransfer).toBe(true);
+    expect(leg.transferGroupId).toBeNull();
+  });
+
+  it("leaves a card refund alone — an inflow with no payment signal", () => {
+    insertTx("t-cc-refund", "acc-cc", -60, "2026-12-05", { merchant: "Amazon refund", plaidPrimary: "GENERAL_MERCHANDISE" });
+    expect(sweepCardPayments({ start: "2026-12-01", end: "2026-12-31" })).toBe(0);
+    expect(getFlowTx("t-cc-refund")!.isTransfer).toBe(false);
+  });
+
+  it("reconciles a pending card payment with a later funding leg in the window", () => {
+    insertTx("t-loan-pay", "acc-cc", -800, "2027-01-10", { plaidPrimary: "LOAN_PAYMENTS" });
+    sweepCardPayments({ start: "2027-01-01", end: "2027-01-31" });
+    expect(getFlowTx("t-loan-pay")!.transferGroupId).toBeNull(); // pending until funded
+    insertTx("t-loan-fund", "acc-chq", 800, "2027-01-08", { merchant: "Bill payment" });
+    expect(matchPendingTransfers("2027-01-12").matched).toBe(1);
+    const pay = getFlowTx("t-loan-pay")!;
+    const fund = getFlowTx("t-loan-fund")!;
+    expect(pay.transferGroupId).not.toBeNull();
+    expect(fund.transferGroupId).toBe(pay.transferGroupId);
   });
 });
 

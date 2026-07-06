@@ -15,6 +15,7 @@ export function Transactions() {
   const [search, setSearch] = useState("");
   const [needle, setNeedle] = useState("");
   const [category, setCategory] = useState("");
+  const [sortKey, setSortKey] = useState("date-desc");
   const [limit, setLimit] = useState(PAGE);
   const [selected, setSelected] = useState<TransactionListItem | null>(null);
 
@@ -23,10 +24,11 @@ export function Transactions() {
     const t = setTimeout(() => setNeedle(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
-  useEffect(() => setLimit(PAGE), [lens, month, needle, category]);
+  useEffect(() => setLimit(PAGE), [lens, month, needle, category, sortKey]);
 
-  const q = qs({ lens, month, search: needle, category, limit });
-  const view = useApi<TransactionsListView>(["categories.transactions", lens, month, needle, category, limit], `/api/transactions/all${q}`);
+  const [sort, dir] = sortKey.split("-");
+  const q = qs({ lens, month, search: needle, category, sort, dir, limit });
+  const view = useApi<TransactionsListView>(["categories.transactions", lens, month, needle, category, sortKey, limit], `/api/transactions/all${q}`);
   const categories = useApi<{ categories: Category[] }>(["categories"], "/api/categories");
   const cats = categories.data?.categories ?? [];
   const catById = useMemo(() => new Map(cats.map((c) => [c.category_id, c])), [cats]);
@@ -108,6 +110,14 @@ export function Transactions() {
                 ))}
               </optgroup>
             ))}
+          </select>
+          <select className="input" style={{ width: "auto" }} value={sortKey} onChange={(e) => setSortKey(e.target.value)} title="Sort transactions">
+            <option value="date-desc">Newest first</option>
+            <option value="date-asc">Oldest first</option>
+            <option value="account-asc">Account (A→Z)</option>
+            <option value="category-asc">Category (A→Z)</option>
+            <option value="amount-desc">Amount (high→low)</option>
+            <option value="amount-asc">Amount (low→high)</option>
           </select>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "86px 1.5fr 1fr 1fr 110px", gap: 12, padding: "4px 16px 8px" }} className="tablehead">

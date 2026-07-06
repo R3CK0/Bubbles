@@ -81,10 +81,14 @@ export function Spark({ values, color = "var(--accent)", height = 38 }: { values
   );
 }
 
+export function StatusChip({ color, label }: { color: string; label: string }) {
+  return <span className="chip" style={{ background: `color-mix(in srgb, ${color} 12%, transparent)`, color }}>{label}</span>;
+}
+
 export function Feasibility({ verdict }: { verdict: "yes" | "tight" | "no" }) {
   const map = { yes: ["var(--accent)", "✓ on track"], tight: ["var(--warn)", "~ tight"], no: ["var(--danger)", "✕ not feasible"] } as const;
   const [color, label] = map[verdict];
-  return <span className="chip" style={{ background: `color-mix(in srgb, ${color} 12%, transparent)`, color }}>{label}</span>;
+  return <StatusChip color={color} label={label} />;
 }
 
 export function EmptyState({ text, action }: { text: string; action?: ReactNode }) {

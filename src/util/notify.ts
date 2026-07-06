@@ -27,7 +27,10 @@ export async function notify(text: string): Promise<boolean> {
       }),
     });
     if (!res.ok) {
-      console.warn(`[notify] Telegram sendMessage failed: HTTP ${res.status}`);
+      // Telegram returns a JSON body with a human-readable `description`
+      // (e.g. "chat not found", "bot was blocked by the user") — surface it.
+      const detail = await res.json().then((b) => (b as { description?: string }).description).catch(() => undefined);
+      console.warn(`[notify] Telegram sendMessage failed: HTTP ${res.status}${detail ? ` — ${detail}` : ""}`);
       return false;
     }
     return true;

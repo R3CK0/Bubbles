@@ -2,9 +2,10 @@ import { useMemo, useRef, useState } from "react";
 import { useAction, useApi, useCtx, usePersons } from "../api/hooks";
 import { api } from "../api/client";
 import type { Goal, GoalCategory, GoalOptions, GoalsView, PlanRow, PlanLine, Scenario, SolveResult } from "../api/types";
-import { Card, EmptyState, Feasibility, Field, Modal, Ring } from "../components/ui";
+import { Card, EmptyState, Feasibility, Field, Modal, Ring, StatusChip } from "../components/ui";
 import { Tip } from "../components/Tip";
 import { fmt, monthLabel } from "../lib/format";
+import { goalStatus } from "../lib/goalStatus";
 
 interface GoalDraft {
   name: string;
@@ -220,6 +221,7 @@ export function Goals() {
   const solve = preview ?? view.data?.solve ?? null;
   const verdicts = useMemo(() => new Map((solve?.perGoal ?? []).map((v) => [v.goalId, v])), [solve]);
   const goals = view.data?.goals ?? [];
+  const goalById = useMemo(() => new Map(goals.map((g) => [g.goal_id, g])), [goals]);
   const dirty = Object.keys(shifts).length > 0;
   const collisions = new Set(solve?.collisions ?? []);
   const detailGoal = goals.find((g) => g.goal_id === detail) ?? null;
@@ -261,7 +263,7 @@ export function Goals() {
               const date = shifts[g.goal_id] ?? g.target_date!;
               const m = Math.max(0.5, Math.min(HORIZON, monthsFromNow(date)));
               const v = verdicts.get(g.goal_id);
-              const color = v?.feasible === "no" ? "var(--danger)" : v?.feasible === "tight" ? "var(--warn)" : "var(--accent)";
+              const { color } = goalStatus(g.category, g.funded_amount, g.target_amount, v?.feasible);
               return (
                 <div key={g.goal_id} style={{ position: "relative", height: 30 }}>
                   <div onPointerDown={(e) => onDrag(g, e)} onClick={() => setDetail(g.goal_id)}
@@ -281,14 +283,19 @@ export function Goals() {
         </div>
         {solve && (
           <div className="row" style={{ gap: 10, marginTop: 14, flexWrap: "wrap" }}>
-            {solve.perGoal.map((v) => (
-              <div key={v.goalId} className="panel row" style={{ padding: "8px 12px", gap: 8 }}>
-                <span style={{ fontSize: 12.5, fontWeight: 600 }}>{v.name}</span>
-                <Feasibility verdict={v.feasible} />
-                {v.requiredMonthly !== null && <span className="muted num" style={{ fontSize: 11.5 }}>{fmt(v.requiredMonthly)}/mo</span>}
-                {v.gap > 0 && <span className="num" style={{ fontSize: 11.5, color: "var(--danger)" }}>gap {fmt(v.gap)}</span>}
-              </div>
-            ))}
+            {solve.perGoal.map((v) => {
+              const g = goalById.get(v.goalId);
+              const status = g ? goalStatus(g.category, g.funded_amount, g.target_amount, v.feasible) : null;
+              return (
+                <div key={v.goalId} className="panel row" style={{ padding: "8px 12px", gap: 8 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>{v.name}</span>
+                  {status ? <StatusChip color={status.color} label={status.label} /> : <Feasibility verdict={v.feasible} />}
+                  {v.requiredMonthly !== null && <span className="muted num" style={{ fontSize: 11.5 }}>{fmt(v.requiredMonthly)}/mo</span>}
+                  {/* a spending goal's "gap" is just its unspent budget — not a shortfall, so don't flag it */}
+                  {v.gap > 0 && g?.category !== "spending" && <span className="num" style={{ fontSize: 11.5, color: "var(--danger)" }}>gap {fmt(v.gap)}</span>}
+                </div>
+              );
+            })}
           </div>
         )}
       </Card>
@@ -296,7 +303,7 @@ export function Goals() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 16 }}>
         {goals.map((g) => {
           const v = verdicts.get(g.goal_id);
-          const color = v?.feasible === "no" ? "var(--danger)" : v?.feasible === "tight" ? "var(--warn)" : "var(--accent)";
+          const { color } = goalStatus(g.category, g.funded_amount, g.target_amount, v?.feasible);
           return (
             <Card key={g.goal_id} style={{ cursor: "pointer" }} onClick={() => setDetail(g.goal_id)}>
               <div className="row" style={{ gap: 14 }}>

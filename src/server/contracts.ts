@@ -315,23 +315,44 @@ export const scenarioSchema = z
   .strict();
 
 // ---- Manual positions (portfolio state is user-maintained) ----
+/** When a position is an option contract picked from the chain, its resolved
+ *  underlying/expiry/strike travels alongside so we can store it structured. */
+export const optionContractSchema = z
+  .object({
+    underlying: z.string().min(1),
+    expiry: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    strike: z.number().positive(),
+    optionType: z.enum(["call", "put"]),
+    currency: z.string().length(3).optional(),
+  })
+  .strict();
+
 export const positionSchema = z
   .object({
     accountId: z.string().min(1),
     symbol: z.string().min(1).nullable().optional(),
     name: z.string().min(1),
-    assetType: z.enum(["stock", "etf", "crypto", "option", "cash", "other"]),
+    assetType: z.enum(["stock", "etf", "crypto", "option", "currency", "commodity", "cash", "other"]),
     quantity: z.number().min(0),
     bookCost: z.number().min(0).nullable().optional(),
     manualValue: z.number().min(0).nullable().optional(),
     currency: z.string().length(3).optional(),
     effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    option: optionContractSchema.optional(),
   })
   .strict()
   .refine((p) => p.symbol || p.manualValue !== undefined, {
     message: "either a market symbol or a manualValue is required",
   });
 export type PositionBody = z.infer<typeof positionSchema>;
+
+// ---- Market data (search / quote / options chain) ----
+export const symbolSearchSchema = z.object({ q: z.string().min(1).max(64) });
+export const quoteQuerySchema = z.object({ symbols: z.string().min(1).max(400) });
+export const optionChainSchema = z.object({
+  underlying: z.string().min(1).max(32),
+  expiry: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
 
 // ---- Tax & ops (step 4) ----
 export const optimizeSchema = z

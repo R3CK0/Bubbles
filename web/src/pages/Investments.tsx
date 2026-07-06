@@ -1,18 +1,52 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useAction, useApi, useCtx } from "../api/hooks";
 import { api } from "../api/client";
-import type { AccountPositions, AllocationSlice, BuildingsPnl, Holding, ManualAsset, Performance, PortfolioSeries, Position } from "../api/types";
+import type { AccountPositions, AllocationSlice, AssetType, BuildingsPnl, Holding, ManualAsset, OptionChain, Performance, PortfolioSeries, Position, PositionsView, Quote, SymbolHit } from "../api/types";
 import { Card, EmptyState, Field, Modal, Seg, Spark, Spinner } from "../components/ui";
 import { Tip } from "../components/Tip";
 import { Chart, chartBase, EChartsOption } from "../components/Chart";
 import { cssVar, fmt, fmtC, fmtPct, monthShort, palette } from "../lib/format";
 import { useUi } from "../stores/ui";
 
-const ASSET_TYPES = ["stock", "etf", "crypto", "option", "cash", "other"] as const;
+const ASSET_TYPES: AssetType[] = ["stock", "etf", "crypto", "option", "currency", "commodity", "cash", "other"];
+/** Types priced from a market symbol (vs. cash/other carried at manual value). */
+const MARKET_TYPES = new Set<AssetType>(["stock", "etf", "crypto", "option", "currency", "commodity"]);
+const LIVE_REFRESH_MS = 300_000; // 5 min — matches the backend intraday job cadence
 
+interface OptionDraft { underlying: string; expiry: string; strike: number; optionType: "call" | "put"; currency?: string }
 interface PosDraft {
   positionId?: string; accountId: string; symbol: string; name: string;
-  assetType: (typeof ASSET_TYPES)[number]; quantity: number; bookCost: number | null; manualValue: number | null;
+  assetType: AssetType; quantity: number; bookCost: number | null; manualValue: number | null;
+  currency: string; option: OptionDraft | null;
+}
+
+/** Value settles into a debounced copy after `ms` of quiet. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+function kindBadge(kind: string): string {
+  return { stock: "EQ", etf: "ETF", crypto: "CRYPTO", option: "OPT", currency: "FX", commodity: "COMM", index: "IDX" }[kind] ?? kind.toUpperCase();
+}
+
+/** As-of freshness pill from an ISO timestamp. */
+function AsOf({ iso }: { iso: string | null | undefined }) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  const mins = Math.round((Date.now() - d.getTime()) / 60000);
+  const label = mins < 1 ? "live" : mins < 60 ? `${mins}m ago` : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return <span className="chip" style={{ fontSize: 11, color: "var(--ink-muted)" }} title={`quotes as of ${d.toLocaleString()}`}>● {label}</span>;
+}
+
+function ChangePct({ pct }: { pct: number | null | undefined }) {
+  if (pct === null || pct === undefined) return null;
+  const up = pct >= 0;
+  return <span className="num" style={{ fontSize: 11, color: up ? "var(--accent)" : "var(--danger)" }}>{up ? "▲" : "▼"}{Math.abs(pct).toFixed(2)}%</span>;
 }
 
 export function Investments() {
@@ -24,17 +58,22 @@ export function Investments() {
   const [targetsOpen, setTargetsOpen] = useState(false);
   const [revalue, setRevalue] = useState<ManualAsset | null>(null);
 
-  const series = useApi<PortfolioSeries>(["portfolio.series", lens, decompose], `/api/portfolio/series${q}&days=365&decompose=${decompose === "split"}`);
-  const holdings = useApi<{ holdings: Holding[] }>(["portfolio.holdings", lens], `/api/portfolio/holdings${q}`);
-  const allocation = useApi<{ allocation: AllocationSlice[] }>(["portfolio.allocation", lens], `/api/portfolio/allocation${q}`);
-  const performance = useApi<Performance>(["portfolio.performance", lens], `/api/portfolio/performance${q}&days=365`);
-  const positions = useApi<{ accounts: AccountPositions[] }>(["positions", lens], `/api/positions${q}`);
+  const live = { refetchInterval: LIVE_REFRESH_MS };
+  const series = useApi<PortfolioSeries>(["portfolio.series", lens, decompose], `/api/portfolio/series${q}&days=365&decompose=${decompose === "split"}`, live);
+  const holdings = useApi<{ holdings: Holding[] }>(["portfolio.holdings", lens], `/api/portfolio/holdings${q}`, live);
+  const allocation = useApi<{ allocation: AllocationSlice[] }>(["portfolio.allocation", lens], `/api/portfolio/allocation${q}`, live);
+  const performance = useApi<Performance>(["portfolio.performance", lens], `/api/portfolio/performance${q}&days=365`, live);
+  const positions = useApi<PositionsView>(["positions", lens], `/api/positions${q}`, live);
   const assets = useApi<{ assets: ManualAsset[] }>(["portfolio.assets"], "/api/assets");
   const buildings = useApi<BuildingsPnl>(["portfolio.buildings", lens, month], `/api/portfolio/buildings${q}`);
 
   const savePos = useAction(
     (d: PosDraft) => {
-      const body = { accountId: d.accountId, symbol: d.symbol || null, name: d.name, assetType: d.assetType, quantity: d.quantity, bookCost: d.bookCost, manualValue: d.manualValue };
+      const body = {
+        accountId: d.accountId, symbol: d.symbol || null, name: d.name, assetType: d.assetType,
+        quantity: d.quantity, bookCost: d.bookCost, manualValue: d.manualValue, currency: d.currency || undefined,
+        option: d.assetType === "option" && d.option ? d.option : undefined,
+      };
       return d.positionId
         ? api(`/api/positions/${d.positionId}`, { method: "PATCH", json: body })
         : api("/api/positions", { method: "POST", json: body });
@@ -43,26 +82,22 @@ export function Investments() {
   );
   const deletePos = useAction((id: string) => api(`/api/positions/${id}`, { method: "DELETE" }), ["positions", "portfolio", "networth"]);
   const refresh = useAction(() => api("/api/positions/refresh", { method: "POST", json: {} }), ["positions", "portfolio", "networth", "overview"]);
+  const refreshLive = useAction(() => api("/api/positions/quotes/refresh", { method: "POST", json: {} }), ["positions", "portfolio", "overview"]);
   const saveTargets = useAction((t: Record<string, number>) => api("/api/portfolio/targets", { method: "PUT", json: t }), ["portfolio"]);
   const addValuation = useAction(
     (a: { assetId: string; value: number }) => api(`/api/assets/${a.assetId}/valuations`, { method: "POST", json: { date: new Date().toISOString().slice(0, 10), value: a.value, source: "manual revalue" } }),
     ["portfolio", "networth", "overview"],
   );
 
-  // symbol validation (debounced)
-  const [symbolCheck, setSymbolCheck] = useState<{ ok: boolean; msg: string } | null>(null);
+  // Opening the page pulls fresh live quotes for the whole portfolio once
+  // (the manual buttons and the 5-min interval still apply).
+  const didAutoRefresh = useRef(false);
   useEffect(() => {
-    if (!posDraft?.symbol) { setSymbolCheck(null); return; }
-    const t = setTimeout(() => {
-      api<{ valid?: boolean; ok?: boolean; name?: string; price?: number; error?: string }>(`/api/positions/validate/${encodeURIComponent(posDraft.symbol)}`)
-        .then((r) => {
-          const ok = (r.valid ?? r.ok ?? false) as boolean;
-          setSymbolCheck({ ok, msg: ok ? `✓ ${r.name ?? posDraft.symbol}` : "not found — TSX tickers need .TO" });
-        })
-        .catch(() => setSymbolCheck({ ok: false, msg: "validation unavailable" }));
-    }, 450);
-    return () => clearTimeout(t);
-  }, [posDraft?.symbol]);
+    if (didAutoRefresh.current) return;
+    didAutoRefresh.current = true;
+    refreshLive.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const seriesOption = useMemo<EChartsOption>(() => {
     const s = series.data;
@@ -110,6 +145,8 @@ export function Investments() {
 
   const totalValue = (positions.data?.accounts ?? []).reduce((t, a) => t + a.computedTotal, 0);
 
+  const openNew = () => setPosDraft({ accountId: positions.data?.accounts[0]?.accountId ?? "", symbol: "", name: "", assetType: "etf", quantity: 0, bookCost: null, manualValue: null, currency: "CAD", option: null });
+
   return (
     <div className="page col" style={{ gap: 20 }}>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.6fr) minmax(0,1fr)", gap: 20 }}>
@@ -148,14 +185,18 @@ export function Investments() {
       <Card style={{ padding: 8 }}>
         <div className="spread" style={{ padding: "12px 16px 10px" }}>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>Positions <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>(you maintain these — Plaid investments needs production access)</span><Tip text="Enter what each investment account holds: a market symbol + quantity (TSX tickers need .TO), or a manual value for cash. 'Refresh prices' pulls Yahoo daily closes and rebuilds portfolio history. The 'vs bank' chip flags drift between your entries and the reported balance." /></div>
+            <div style={{ fontSize: 14, fontWeight: 600 }}>Positions <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>(you maintain these — Plaid investments needs production access)</span><Tip text="Enter what each investment account holds: search a ticker (stocks, ETFs, FX, commodities, options, crypto) or enter a manual value for cash. Prices refresh live every 5 min during market hours; 'Refresh prices' also rebuilds full history. The 'vs bank' chip flags drift between your entries and the reported balance." /></div>
           </div>
           <div className="row" style={{ gap: 8 }}>
-            <button className="btn-ghost" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+            <AsOf iso={positions.data?.quotesAsOf} />
+            <button className="btn-ghost" onClick={() => refreshLive.mutate()} disabled={refreshLive.isPending} title="Fetch live quotes now">
+              {refreshLive.isPending ? <Spinner /> : "●"} Live
+            </button>
+            <button className="btn-ghost" onClick={() => refresh.mutate()} disabled={refresh.isPending} title="Pull daily closes and rebuild history">
               {refresh.isPending ? <Spinner /> : "↻"} Refresh prices
             </button>
             <button className="btn-ghost" onClick={() => setEditorOpen((s) => !s)}>{editorOpen ? "Done" : "Edit"}</button>
-            <button className="btn" onClick={() => setPosDraft({ accountId: positions.data?.accounts[0]?.accountId ?? "", symbol: "", name: "", assetType: "etf", quantity: 0, bookCost: null, manualValue: null })}>+ Position</button>
+            <button className="btn" onClick={openNew}>+ Position</button>
           </div>
         </div>
         {(positions.data?.accounts ?? []).map((acct) => (
@@ -171,15 +212,21 @@ export function Investments() {
               )}
             </div>
             {acct.positions.map((p: Position) => (
-              <div key={p.position_id} className="hoverable" style={{ display: "grid", gridTemplateColumns: "90px 1.4fr 90px 110px 120px 80px", gap: 12, padding: "7px 10px", alignItems: "center" }}>
-                <span className="num" style={{ fontSize: 12.5, fontWeight: 700, color: "var(--accent)" }}>{p.symbol ?? "—"}</span>
+              <div key={p.position_id} className="hoverable" style={{ display: "grid", gridTemplateColumns: "90px 1.4fr 90px 120px 120px 80px", gap: 12, padding: "7px 10px", alignItems: "center" }}>
+                <span className="col" style={{ gap: 1 }}>
+                  <span className="num" style={{ fontSize: 12.5, fontWeight: 700, color: "var(--accent)" }}>{p.symbol ?? "—"}</span>
+                  {p.currency && p.currency !== "CAD" && <span className="muted num" style={{ fontSize: 9.5 }}>{p.currency}</span>}
+                </span>
                 <span style={{ fontSize: 12.5 }}>{p.name}</span>
                 <span className="num muted" style={{ fontSize: 12, textAlign: "right" }}>{p.quantity}</span>
-                <span className="num muted" style={{ fontSize: 12, textAlign: "right" }}>{p.lastPrice !== null ? fmtC(p.lastPrice) : "manual"}</span>
+                <span className="col" style={{ gap: 1, alignItems: "flex-end" }}>
+                  <span className="num muted" style={{ fontSize: 12 }}>{p.lastPrice !== null ? fmtC(p.lastPrice) : "manual"}</span>
+                  <ChangePct pct={p.changePct} />
+                </span>
                 <span className="num" style={{ fontSize: 12.5, fontWeight: 600, textAlign: "right" }}>{fmt(p.currentValue)}</span>
                 {editorOpen ? (
                   <span className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
-                    <span className="link" style={{ fontSize: 11.5 }} onClick={() => setPosDraft({ positionId: p.position_id, accountId: p.account_id, symbol: p.symbol ?? "", name: p.name, assetType: p.asset_type, quantity: p.quantity, bookCost: p.book_cost, manualValue: p.manual_value })}>edit</span>
+                    <span className="link" style={{ fontSize: 11.5 }} onClick={() => setPosDraft({ positionId: p.position_id, accountId: p.account_id, symbol: p.symbol ?? "", name: p.name, assetType: p.asset_type, quantity: p.quantity, bookCost: p.book_cost, manualValue: p.manual_value, currency: p.currency, option: null })}>edit</span>
                     <span style={{ cursor: "pointer", color: "var(--ink-muted)" }} onClick={() => deletePos.mutate(p.position_id)}>×</span>
                   </span>
                 ) : <span />}
@@ -199,7 +246,10 @@ export function Investments() {
           {(holdings.data?.holdings ?? []).map((h) => (
             <div key={h.securityId} className="hoverable" style={{ display: "grid", gridTemplateColumns: "80px 1.2fr 100px 100px 90px 110px", gap: 12, padding: "8px 16px", alignItems: "center" }}>
               <span className="num" style={{ fontSize: 12.5, fontWeight: 700, color: "var(--accent)" }}>{h.ticker ?? "—"}</span>
-              <span style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{h.name ?? "—"}</span>
+              <span className="col" style={{ gap: 1, minWidth: 0 }}>
+                <span style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{h.name ?? "—"}</span>
+                <ChangePct pct={h.changePct} />
+              </span>
               <span className="num" style={{ fontSize: 12.5, fontWeight: 600, textAlign: "right" }}>{fmt(h.value)}</span>
               <span className="num" style={{ fontSize: 12.5, textAlign: "right", color: (h.gain ?? 0) >= 0 ? "var(--accent)" : "var(--danger)" }}>{h.gain !== null ? fmt(h.gain) : "—"}</span>
               <span className="num muted" style={{ fontSize: 12, textAlign: "right" }}>{fmtPct(h.weight, 1)}</span>
@@ -239,39 +289,12 @@ export function Investments() {
       </div>
 
       {posDraft && (
-        <Modal title={posDraft.positionId ? "Edit position" : "Add position"} onClose={() => setPosDraft(null)}>
-          <div className="col" style={{ gap: 13 }}>
-            <Field label="Account">
-              <select className="input" value={posDraft.accountId} onChange={(e) => setPosDraft({ ...posDraft, accountId: e.target.value })}>
-                {(positions.data?.accounts ?? []).map((a) => <option key={a.accountId} value={a.accountId}>{a.accountName ?? a.accountId}{a.registeredType ? ` (${a.registeredType})` : ""}</option>)}
-              </select>
-            </Field>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.6fr", gap: 12 }}>
-              <Field label="Symbol" hint={symbolCheck?.msg ?? "Yahoo symbol; TSX needs .TO"}>
-                <input className="input num" value={posDraft.symbol} onChange={(e) => setPosDraft({ ...posDraft, symbol: e.target.value.toUpperCase() })} placeholder="XEQT.TO" style={{ borderColor: symbolCheck ? (symbolCheck.ok ? "var(--accent)" : "var(--warn)") : undefined }} />
-              </Field>
-              <Field label="Name"><input className="input" value={posDraft.name} onChange={(e) => setPosDraft({ ...posDraft, name: e.target.value })} placeholder="iShares All-Equity ETF" /></Field>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-              <Field label="Type">
-                <select className="input" value={posDraft.assetType} onChange={(e) => setPosDraft({ ...posDraft, assetType: e.target.value as PosDraft["assetType"] })}>
-                  {ASSET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </Field>
-              <Field label="Quantity"><input className="input num" type="number" min={0} step="any" value={posDraft.quantity || ""} onChange={(e) => setPosDraft({ ...posDraft, quantity: Number(e.target.value) })} /></Field>
-              <Field label="Book cost"><input className="input num" type="number" min={0} value={posDraft.bookCost ?? ""} onChange={(e) => setPosDraft({ ...posDraft, bookCost: e.target.value ? Number(e.target.value) : null })} /></Field>
-            </div>
-            {!posDraft.symbol && (
-              <Field label="Manual value" hint="required when there's no market symbol (e.g. cash)">
-                <input className="input num" type="number" min={0} value={posDraft.manualValue ?? ""} onChange={(e) => setPosDraft({ ...posDraft, manualValue: e.target.value ? Number(e.target.value) : null })} />
-              </Field>
-            )}
-            <button className="btn" disabled={!posDraft.name || !posDraft.accountId || (!posDraft.symbol && posDraft.manualValue === null)}
-              onClick={() => { savePos.mutate(posDraft); setPosDraft(null); }}>
-              {posDraft.positionId ? "Save" : "Add position"}
-            </button>
-          </div>
-        </Modal>
+        <PositionModal
+          draft={posDraft}
+          setDraft={setPosDraft}
+          accounts={positions.data?.accounts ?? []}
+          onSave={() => { savePos.mutateAsync(posDraft).then(() => refreshLive.mutate()).catch(() => {}); setPosDraft(null); }}
+        />
       )}
 
       {targetsOpen && (
@@ -282,6 +305,211 @@ export function Investments() {
         <Modal title={`Revalue ${revalue.name}`} onClose={() => setRevalue(null)}>
           <RevalueForm asset={revalue} onSubmit={(value) => { addValuation.mutate({ assetId: revalue.asset_id, value }); setRevalue(null); }} />
         </Modal>
+      )}
+    </div>
+  );
+}
+
+// ---- Add / edit position modal ----
+
+function PositionModal({ draft, setDraft, accounts, onSave }: { draft: PosDraft; setDraft: Dispatch<SetStateAction<PosDraft | null>>; accounts: AccountPositions[]; onSave: () => void }) {
+  const isOption = draft.assetType === "option";
+  const isManual = !MARKET_TYPES.has(draft.assetType);
+  const canSave = !!draft.name && !!draft.accountId && (isManual ? draft.manualValue !== null : !!draft.symbol) && draft.quantity >= 0;
+  const foreign = !!draft.currency && draft.currency !== "CAD";
+  const currencyOptions = Array.from(new Set(["CAD", "USD", draft.currency].filter(Boolean)));
+
+  // Live quote preview for the chosen symbol; also auto-detects the currency
+  // the instrument trades in (so picking a US stock sets USD).
+  const [quote, setQuote] = useState<Quote | null>(null);
+  useEffect(() => {
+    if (!draft.symbol || isManual) { setQuote(null); return; }
+    let alive = true;
+    const symbol = draft.symbol;
+    api<{ quotes: Quote[] }>(`/api/securities/quote?symbols=${encodeURIComponent(symbol)}`)
+      .then((r) => {
+        if (!alive) return;
+        const qt = r.quotes[0] ?? null;
+        setQuote(qt);
+        if (qt?.currency) setDraft((d) => (d && d.symbol === symbol && d.currency !== qt.currency ? { ...d, currency: qt.currency } : d));
+      })
+      .catch(() => { if (alive) setQuote(null); });
+    return () => { alive = false; };
+  }, [draft.symbol, isManual, setDraft]);
+
+  return (
+    <Modal title={draft.positionId ? "Edit position" : "Add position"} onClose={() => setDraft(null)} width={560}>
+      <div className="col" style={{ gap: 13 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12 }}>
+          <Field label="Account">
+            <select className="input" value={draft.accountId} onChange={(e) => setDraft({ ...draft, accountId: e.target.value })}>
+              {accounts.map((a) => <option key={a.accountId} value={a.accountId}>{a.accountName ?? a.accountId}{a.registeredType ? ` (${a.registeredType})` : ""}</option>)}
+            </select>
+          </Field>
+          <Field label="Type">
+            <select className="input" value={draft.assetType} onChange={(e) => {
+              const assetType = e.target.value as AssetType;
+              // Switching into/out of market vs manual clears stale symbol/option state.
+              setDraft({ ...draft, assetType, symbol: MARKET_TYPES.has(assetType) ? draft.symbol : "", option: null });
+            }}>
+              {ASSET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </Field>
+        </div>
+
+        {isOption ? (
+          <OptionPicker
+            onPick={(c) => setDraft({ ...draft, symbol: c.contractSymbol, name: c.name, currency: c.currency, option: { underlying: c.underlying, expiry: c.expiry, strike: c.strike, optionType: c.optionType, currency: c.currency } })}
+            picked={draft.symbol}
+          />
+        ) : !isManual ? (
+          <Field label="Symbol" hint={quote ? `${fmtC(quote.price)} ${quote.currency}${quote.changePct !== null ? ` · ${quote.changePct >= 0 ? "+" : ""}${quote.changePct.toFixed(2)}%` : ""}` : "Search a ticker, or type an exact symbol (TSX needs .TO)"}>
+            <SymbolSearch
+              initial={draft.symbol}
+              onPick={(hit) => setDraft({ ...draft, symbol: hit.symbol, name: hit.name || draft.name || hit.symbol, currency: hit.currency ?? draft.currency, assetType: mapKind(hit.kind, draft.assetType) })}
+              onRaw={(sym) => setDraft({ ...draft, symbol: sym, name: draft.name || sym })}
+            />
+          </Field>
+        ) : null}
+
+        <Field label="Name"><input className="input" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="iShares All-Equity ETF" /></Field>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          <Field label={isOption ? "Contracts" : "Quantity"}><input className="input num" type="number" min={0} step="any" value={draft.quantity || ""} onChange={(e) => setDraft({ ...draft, quantity: Number(e.target.value) })} /></Field>
+          <Field label={`Book cost${foreign ? ` (${draft.currency})` : ""}`} hint={`total you paid, in ${draft.currency || "CAD"}`}>
+            <input className="input num" type="number" min={0} value={draft.bookCost ?? ""} onChange={(e) => setDraft({ ...draft, bookCost: e.target.value ? Number(e.target.value) : null })} />
+          </Field>
+          <Field label="Currency" hint={foreign ? "→ CAD at market rate" : undefined}>
+            <select className="input" value={draft.currency} onChange={(e) => setDraft({ ...draft, currency: e.target.value })}>
+              {currencyOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </Field>
+        </div>
+
+        {foreign && (
+          <div className="muted" style={{ fontSize: 11.5, marginTop: -4 }}>
+            Prices and book cost are in {draft.currency}; the portfolio converts them to CAD at the current market rate.
+          </div>
+        )}
+
+        {isManual && (
+          <Field label={`Manual value${foreign ? ` (${draft.currency})` : ""}`} hint="required for cash / other (no market symbol)">
+            <input className="input num" type="number" min={0} value={draft.manualValue ?? ""} onChange={(e) => setDraft({ ...draft, manualValue: e.target.value ? Number(e.target.value) : null })} />
+          </Field>
+        )}
+
+        <button className="btn" disabled={!canSave} onClick={onSave}>{draft.positionId ? "Save" : "Add position"}</button>
+      </div>
+    </Modal>
+  );
+}
+
+/** Best-effort: adopt the searched instrument's kind as the position type. */
+function mapKind(kind: SymbolHit["kind"], fallback: AssetType): AssetType {
+  const map: Record<string, AssetType> = { stock: "stock", etf: "etf", crypto: "crypto", currency: "currency", commodity: "commodity", option: "option" };
+  return map[kind] ?? fallback;
+}
+
+// ---- Symbol autocomplete ----
+
+function SymbolSearch({ initial, onPick, onRaw }: { initial: string; onPick: (hit: SymbolHit) => void; onRaw: (sym: string) => void }) {
+  const [text, setText] = useState(initial);
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const debounced = useDebounced(text.trim(), 250);
+  const search = useApi<{ hits: SymbolHit[] }>(["securities.search", debounced], debounced.length >= 1 && open ? `/api/securities/search?q=${encodeURIComponent(debounced)}` : null, { retry: false });
+  const hits = search.data?.hits ?? [];
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => { if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const choose = (h: SymbolHit) => { setText(h.symbol); onPick(h); setOpen(false); };
+  const commitRaw = () => { const s = text.trim().toUpperCase(); if (s) { onRaw(s); setOpen(false); } };
+
+  return (
+    <div ref={boxRef} style={{ position: "relative" }}>
+      <input
+        className="input num" value={text} placeholder="AAPL · XEQT.TO · BTC-CAD · EURUSD=X"
+        onChange={(e) => { setText(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); if (hits[0]) choose(hits[0]); else commitRaw(); } }}
+      />
+      {open && debounced.length >= 1 && (
+        <div className="panel" style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 20, maxHeight: 260, overflowY: "auto", padding: 4 }}>
+          {search.isFetching && hits.length === 0 && <div className="muted" style={{ padding: "8px 10px", fontSize: 12 }}><Spinner /> searching…</div>}
+          {!search.isFetching && hits.length === 0 && <div className="muted" style={{ padding: "8px 10px", fontSize: 12 }}>no matches — press Enter to use “{text.toUpperCase()}”</div>}
+          {hits.map((h) => (
+            <div key={h.symbol} className="hoverable row" style={{ gap: 8, padding: "7px 10px", cursor: "pointer", alignItems: "center" }} onClick={() => choose(h)}>
+              <span className="num" style={{ fontSize: 12.5, fontWeight: 700, color: "var(--accent)", minWidth: 78 }}>{h.symbol}</span>
+              <span style={{ fontSize: 12, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{h.name}</span>
+              <span className="chip" style={{ fontSize: 10 }}>{kindBadge(h.kind)}</span>
+              {h.exchange && <span className="muted" style={{ fontSize: 10.5 }}>{h.exchange}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- Option chain picker ----
+
+interface PickedContract { contractSymbol: string; name: string; underlying: string; expiry: string; strike: number; optionType: "call" | "put"; currency: string }
+
+function OptionPicker({ onPick, picked }: { onPick: (c: PickedContract) => void; picked: string }) {
+  const [underlying, setUnderlying] = useState("");
+  const [loaded, setLoaded] = useState("");
+  const [expiry, setExpiry] = useState<string>("");
+  const [side, setSide] = useState<"call" | "put">("call");
+  const chain = useApi<OptionChain>(["options.chain", loaded, expiry], loaded ? `/api/options/chain?underlying=${encodeURIComponent(loaded)}${expiry ? `&expiry=${expiry}` : ""}` : null, { retry: false });
+
+  useEffect(() => { if (chain.data && !expiry && chain.data.expiry) setExpiry(chain.data.expiry); }, [chain.data]);
+
+  const rows = (side === "call" ? chain.data?.calls : chain.data?.puts) ?? [];
+
+  return (
+    <div className="col" style={{ gap: 10 }}>
+      <div className="row" style={{ gap: 8, alignItems: "flex-end" }}>
+        <Field label="Underlying">
+          <input className="input num" value={underlying} placeholder="AAPL" onChange={(e) => setUnderlying(e.target.value.toUpperCase())} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); setExpiry(""); setLoaded(underlying.trim()); } }} />
+        </Field>
+        <button className="btn-ghost" onClick={() => { setExpiry(""); setLoaded(underlying.trim()); }} disabled={!underlying.trim()}>Load chain</button>
+      </div>
+
+      {chain.isFetching && <div className="muted" style={{ fontSize: 12 }}><Spinner /> loading chain…</div>}
+      {chain.isError && <div style={{ fontSize: 12, color: "var(--warn)" }}>No chain for “{loaded}”. Options need US-style underlyings (e.g. AAPL).</div>}
+
+      {chain.data && (
+        <>
+          <div className="row" style={{ gap: 8 }}>
+            <select className="input" style={{ maxWidth: 180 }} value={expiry} onChange={(e) => setExpiry(e.target.value)}>
+              {chain.data.expiries.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+            <Seg subtle value={side} onChange={setSide} items={[{ key: "call" as const, label: "Calls" }, { key: "put" as const, label: "Puts" }]} />
+          </div>
+          <div className="panel" style={{ maxHeight: 220, overflowY: "auto", padding: 4 }}>
+            <div className="tablehead" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, padding: "2px 8px" }}>
+              <div>Strike</div><div style={{ textAlign: "right" }}>Bid</div><div style={{ textAlign: "right" }}>Ask</div><div style={{ textAlign: "right" }}>Last</div>
+            </div>
+            {rows.map((o) => {
+              const active = o.contractSymbol === picked;
+              return (
+                <div key={o.contractSymbol} className="hoverable" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, padding: "6px 8px", cursor: "pointer", fontSize: 12, background: active ? "color-mix(in srgb, var(--accent) 14%, transparent)" : undefined }}
+                  onClick={() => onPick({ contractSymbol: o.contractSymbol, name: `${chain.data!.underlying} ${expiry} ${side === "call" ? "C" : "P"} ${o.strike}`, underlying: chain.data!.underlying, expiry, strike: o.strike, optionType: side, currency: o.currency })}>
+                  <span className="num" style={{ fontWeight: 700 }}>{o.strike}</span>
+                  <span className="num muted" style={{ textAlign: "right" }}>{o.bid !== null ? fmtC(o.bid) : "—"}</span>
+                  <span className="num muted" style={{ textAlign: "right" }}>{o.ask !== null ? fmtC(o.ask) : "—"}</span>
+                  <span className="num" style={{ textAlign: "right" }}>{o.lastPrice !== null ? fmtC(o.lastPrice) : "—"}</span>
+                </div>
+              );
+            })}
+            {rows.length === 0 && !chain.isFetching && <div className="muted" style={{ padding: 8, fontSize: 12 }}>no contracts for this expiry</div>}
+          </div>
+          {picked && <div className="muted" style={{ fontSize: 11.5 }}>selected: <span className="num">{picked}</span></div>}
+        </>
       )}
     </div>
   );

@@ -71,4 +71,15 @@ export const config = {
     botToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
     chatId: process.env.TELEGRAM_CHAT_ID ?? "",
   },
+  /**
+   * Live market data. Yahoo Finance is the keyless primary (search + intraday
+   * quotes + daily closes + option chains); Finnhub is an optional fallback
+   * used only when Yahoo errors — set FINNHUB_API_KEY (free tier, 60 req/min)
+   * to enable it. The intraday job refreshes every FINANCES_INTRADAY_MINUTES
+   * during market hours; set it to 0 to disable intraday refresh entirely.
+   */
+  marketData: {
+    finnhubApiKey: process.env.FINNHUB_API_KEY ?? "",
+    intradayMinutes: Math.max(0, Number(process.env.FINANCES_INTRADAY_MINUTES ?? 5)),
+  },
 } as const;

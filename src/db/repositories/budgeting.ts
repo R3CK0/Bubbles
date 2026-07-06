@@ -257,7 +257,7 @@ export function bulkApplyCategoryPatches(
 }
 
 const FLOW_SELECT = `
-  SELECT t.transaction_id, t.account_id, a.person_id, t.amount, t.iso_currency_code,
+  SELECT t.transaction_id, t.account_id, a.type AS account_type, a.person_id, t.amount, t.iso_currency_code,
          t.date, t.merchant_name, t.payee, t.category_id, t.categorization_source,
          t.personal_finance_category_primary, t.personal_finance_category_detailed,
          t.is_transfer, t.transfer_group_id, t.reimbursed_by, t.goal_id, t.goal_line_id, t.pending
@@ -268,6 +268,7 @@ const FLOW_SELECT = `
 interface FlowRow {
   transaction_id: string;
   account_id: string;
+  account_type: string | null;
   person_id: string | null;
   amount: number;
   iso_currency_code: string | null;
@@ -290,6 +291,7 @@ function toFlowTx(row: FlowRow): FlowTx {
   return {
     transactionId: row.transaction_id,
     accountId: row.account_id,
+    accountType: row.account_type,
     personId: row.person_id,
     amount: row.amount,
     currency: row.iso_currency_code,

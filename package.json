@@ -13,6 +13,7 @@
     "start": "node dist/index.js",
     "vault": "tsx src/cli/vault-cli.ts",
     "seed": "tsx src/cli/seed-cli.ts",
+    "notify": "tsx src/cli/notify-cli.ts",
     "web:dev": "npm --prefix web run dev",
     "web:build": "npm --prefix web run build",
     "test": "vitest run"

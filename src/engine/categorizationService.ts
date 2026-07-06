@@ -21,6 +21,7 @@ import {
   clearTransferMark,
   flowsForRange,
   getFlowTx,
+  listCategories,
   listPendingTransferLegs,
   listRules,
   listUncategorized,
@@ -179,11 +180,17 @@ export interface TransactionsListView {
   transactions: TransactionListItem[];
 }
 
+export type TransactionSort = "date" | "amount" | "account" | "category";
+
 export interface TransactionsListOpts {
   /** Substring match against merchant/payee, case-insensitive. */
   search?: string;
   /** Category filter; "uncategorized" and "transfer" are virtual buckets. */
   categoryId?: string;
+  /** Sort key. Defaults to "date". */
+  sort?: TransactionSort;
+  /** Sort direction. Defaults per key (date/amount desc, account/category asc). */
+  dir?: "asc" | "desc";
   limit?: number;
   offset?: number;
 }
@@ -192,6 +199,17 @@ export interface TransactionsListOpts {
  *  included — this is the raw ledger, not the budget's filtered view). */
 export function listTransactions(ctx: EngineContext, opts: TransactionsListOpts = {}): TransactionsListView {
   const accountsById = new Map(listAccounts().map((a) => [a.account_id, a]));
+  const accountLabel = (id: string) => {
+    const a = accountsById.get(id);
+    return (a?.name ?? a?.official_name ?? id).toLowerCase();
+  };
+  const categoryNameById = new Map(listCategories(true).map((c) => [c.category_id, c.name.toLowerCase()]));
+  const categoryLabel = (t: FlowTx) =>
+    t.isTransfer
+      ? "￿ transfer" // transfers/uncategorized sink to the end of an A→Z sort
+      : t.categoryId
+        ? (categoryNameById.get(t.categoryId) ?? t.categoryId)
+        : "￿ uncategorized";
   const needle = opts.search?.trim().toLowerCase();
 
   let rows = flowsForRange(ctx.range).filter((t) => inLens(t.personId, ctx.lens));
@@ -217,7 +235,20 @@ export function listTransactions(ctx: EngineContext, opts: TransactionsListOpts 
     else totalOut -= flow;
   }
 
-  const sorted = rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  const sort = opts.sort ?? "date";
+  const dir = opts.dir ?? (sort === "account" || sort === "category" ? "asc" : "desc");
+  const factor = dir === "asc" ? 1 : -1;
+  const byDateDesc = (a: FlowTx, b: FlowTx) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0);
+  const cmp = (a: FlowTx, b: FlowTx): number => {
+    let d = 0;
+    if (sort === "amount") d = signedFlow(a) - signedFlow(b);
+    else if (sort === "account") d = accountLabel(a.accountId).localeCompare(accountLabel(b.accountId));
+    else if (sort === "category") d = categoryLabel(a).localeCompare(categoryLabel(b));
+    else d = a.date < b.date ? -1 : a.date > b.date ? 1 : 0;
+    // stable, useful secondary order: newest first within an account/category group
+    return d !== 0 ? d * factor : byDateDesc(a, b);
+  };
+  const sorted = rows.sort(cmp);
   const offset = opts.offset ?? 0;
   const page = sorted.slice(offset, offset + (opts.limit ?? 100));
 
@@ -298,6 +329,49 @@ export function detectTransfers(range: { start: string; end: string }): number {
     }
   }
   return pairs;
+}
+
+// ---- credit-card & loan payments: a transfer in, never income ----
+
+/** Accounts whose balance is a debt: an inflow pays it down, it isn't income. */
+const CARD_LOAN_TYPES = new Set(["credit", "loan"]);
+
+/**
+ * A payment landing on a credit card or loan account — an inflow (signedFlow > 0)
+ * that pays the balance down. Refunds and cashback also read as inflows on a
+ * card, so we require a Plaid payment/transfer signal before treating an
+ * *unmatched* one as a transfer; a matched funding withdrawal (detectTransfers)
+ * is proof enough on its own.
+ */
+function isCardOrLoanPayment(tx: FlowTx): boolean {
+  if (!tx.accountType || !CARD_LOAN_TYPES.has(tx.accountType)) return false;
+  if (signedFlow(tx) <= 0) return false; // only inflows reduce the balance
+  const primary = tx.plaidPrimary ?? "";
+  const detailed = tx.plaidDetailed ?? "";
+  return (
+    primary === "LOAN_PAYMENTS" ||
+    primary === "TRANSFER_IN" ||
+    primary === "TRANSFER_OUT" ||
+    /PAYMENT|TRANSFER/.test(detailed)
+  );
+}
+
+/**
+ * Second transfer pass, complementing detectTransfers: any card/loan payment
+ * the amount-pairing sweep didn't already claim is flagged as a pending
+ * transfer so it stays out of income. matchPendingTransfers then reconciles it
+ * with the funding withdrawal from another account inside the 8-day window (or
+ * leaves it excluded, and alerts, if none ever appears). Runs after
+ * detectTransfers and before matchPendingTransfers in the nightly pipeline.
+ */
+export function sweepCardPayments(range: { start: string; end: string }): number {
+  let flagged = 0;
+  for (const tx of flowsForRange(range)) {
+    if (tx.isTransfer || tx.pending || tx.reimbursedBy || tx.goalId) continue;
+    if (!isCardOrLoanPayment(tx)) continue;
+    if (setPendingTransfer(tx.transactionId)) flagged++;
+  }
+  return flagged;
 }
 
 // ---- user-marked transfers: mark one leg now, validate when the other lands ----

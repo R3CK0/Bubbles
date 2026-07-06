@@ -24,3 +24,7 @@ services:
       # Telegram push notifications for failed bank syncs (optional — both required)
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      # Live market data: Yahoo is keyless; Finnhub is an optional fallback.
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY:-}
+      # Intraday portfolio refresh cadence in minutes (0 disables it).
+      FINANCES_INTRADAY_MINUTES: ${FINANCES_INTRADAY_MINUTES:-5}
